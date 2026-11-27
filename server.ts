@@ -37,6 +37,14 @@ async function startServer() {
                       '/* HMR disabled: skip WebSocket connection */'
                     )
                     .replace(
+                      'else throw new SendBeforeConnectError("send was called before connect");',
+                      'else return; /* HMR disabled */'
+                    )
+                    .replace(
+                      'else throw new SendBeforeConnectError("invoke was called before connect");',
+                      'else return; /* HMR disabled */'
+                    )
+                    .replace(
                       'ws.send(JSON.stringify(data));',
                       'ws?.send(JSON.stringify(data));'
                     );
