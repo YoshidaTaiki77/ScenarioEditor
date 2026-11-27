@@ -1,0 +1,1322 @@
+import type {
+  CharacterData,
+  CustomCommonFieldTemplate,
+  DualProfileFieldDef,
+  HistorySnapshot,
+  HistorySnapshotReason,
+  PlotData,
+  ProjectData,
+  ScenarioWorkspace,
+  SceneData,
+  StorageMode,
+} from '../types/scenario';
+import { INITIAL_WORKSPACE } from '../data/initialProject';
+import { parseSceneMarkdown, serializeSceneMarkdown } from './scenarioEngine';
+
+const DB_NAME = 'kotonoha-scenario-db';
+const DB_VERSION = 1;
+const STORE_NAME = 'workspace';
+const WORKSPACE_KEY = 'current_project';
+const DIR_HANDLE_KEY = 'connected_directory_handle';
+const HISTORY_KEY = 'history_snapshots';
+const LS_FALLBACK_KEY = 'kotonoha_scenario_workspace_v1';
+const LS_HISTORY_FALLBACK_KEY = 'kotonoha_scenario_history_v1';
+
+export const HISTORY_DIR_NAME = 'history';
+export const MAX_HISTORY_SNAPSHOTS = 5;
+export const AUTO_SNAPSHOT_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+export interface FSFileHandle {
+  kind: 'file';
+  name: string;
+  getFile(): Promise<File>;
+  createWritable(): Promise<{
+    write(data: string): Promise<void>;
+    close(): Promise<void>;
+  }>;
+}
+
+export interface FSDirectoryHandle {
+  kind: 'directory';
+  name: string;
+  getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<FSDirectoryHandle>;
+  getFileHandle(name: string, options?: { create?: boolean }): Promise<FSFileHandle>;
+  removeEntry?(name: string, options?: { recursive?: boolean }): Promise<void>;
+  values(): AsyncIterableIterator<FSFileHandle | FSDirectoryHandle>;
+  queryPermission?(descriptor?: { mode?: 'read' | 'readwrite' }): Promise<PermissionState>;
+  requestPermission?(descriptor?: { mode?: 'read' | 'readwrite' }): Promise<PermissionState>;
+}
+
+declare global {
+  interface Window {
+    showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<FSDirectoryHandle>;
+  }
+}
+
+export interface StorageLoadResult {
+  workspace: ScenarioWorkspace;
+  storageMode: StorageMode;
+  directoryName?: string;
+  pendingReconnectDirectoryName?: string;
+}
+
+export interface DirectoryConnectResult {
+  status: 'connected' | 'needs-init-choice' | 'cancelled' | 'fallback';
+  handle?: FSDirectoryHandle;
+  loadedWorkspace?: ScenarioWorkspace;
+  message: string;
+}
+
+export interface ParentDirectoryPickResult {
+  status: 'picked' | 'cancelled' | 'unsupported' | 'restricted';
+  handle?: FSDirectoryHandle;
+  message?: string;
+}
+
+export function sanitizeProjectFolderName(name?: string): string {
+  const cleaned = (name ?? '')
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '')
+    .replace(/[. ]+$/g, '');
+  if (!cleaned || cleaned === '.' || cleaned === '..') return '';
+  return cleaned;
+}
+
+export function sanitizeCharacterFolderName(folder?: string): string {
+  const cleaned = (folder ?? '')
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '');
+  if (!cleaned || cleaned === '.' || cleaned === '..') return '';
+  return cleaned;
+}
+
+export function getCharacterFilename(char: CharacterData): string {
+  const raw = (char.filename ?? '').trim();
+  const base = raw || `${char.id}.json`;
+  return base.toLowerCase().endsWith('.json') ? base : `${base}.json`;
+}
+
+export function getCharacterRelativePath(char: CharacterData): string {
+  const folder = sanitizeCharacterFolderName(char.folder);
+  const fname = getCharacterFilename(char);
+  return folder ? `${folder}/${fname}` : fname;
+}
+
+export function getPlotFilename(plot: PlotData): string {
+  const raw = (plot.filename ?? '').trim();
+  const base = raw || `${plot.plotId}.json`;
+  return base.toLowerCase().endsWith('.json') ? base : `${base}.json`;
+}
+
+export function sanitizeSceneFolderName(folder?: string): string {
+  const cleaned = (folder ?? '')
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '');
+  if (!cleaned || cleaned === '.' || cleaned === '..') return '';
+  return cleaned;
+}
+
+export function getSceneFilename(scene: SceneData): string {
+  const raw = (scene.filename ?? '').trim();
+  const base = raw || `${scene.sceneId}.md`;
+  return base.toLowerCase().endsWith('.md') ? base : `${base}.md`;
+}
+
+export function getSceneRelativePath(scene: SceneData): string {
+  const folder = sanitizeSceneFolderName(scene.folder);
+  const fname = getSceneFilename(scene);
+  return folder ? `${folder}/${fname}` : fname;
+}
+
+export function canUseFileSystemAccess(): boolean {
+  return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
+}
+
+export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
+  const seedById = new Map(INITIAL_WORKSPACE.characters.map((c) => [c.id, c]));
+  const folderSet = new Set<string>();
+  const orderedFolders: string[] = [];
+
+  for (const f of raw.project?.characterFolders ?? []) {
+    const clean = sanitizeCharacterFolderName(f);
+    if (clean && !folderSet.has(clean)) {
+      folderSet.add(clean);
+      orderedFolders.push(clean);
+    }
+  }
+
+  const normalizedCharactersRaw = (raw.characters ?? []).map((c) => {
+    const seed = seedById.get(c.id);
+    const gen = c.profiles?.general ?? {};
+    const cleanFolder = sanitizeCharacterFolderName(c.folder);
+    if (cleanFolder && !folderSet.has(cleanFolder)) {
+      folderSet.add(cleanFolder);
+      orderedFolders.push(cleanFolder);
+    }
+
+    return {
+      ...c,
+      filename: getCharacterFilename(c),
+      folder: cleanFolder || undefined,
+      customCommonFields: Array.isArray(c.customCommonFields) ? c.customCommonFields : [],
+      commonFieldLabels: {},
+      hiddenCommonFields: [],
+      dualFields: Array.isArray(c.dualFields) ? c.dualFields : [],
+      profiles: {
+        general: c.profiles?.general ?? {},
+        adult: c.profiles?.adult ?? {},
+      },
+      lockedFields: Array.isArray(c.lockedFields) ? c.lockedFields : [],
+      common: {
+        ...c.common,
+        ageDisplay: c.common?.ageDisplay ?? gen.ageDisplay ?? seed?.common.ageDisplay ?? '',
+        relationship:
+          c.common?.relationship ?? gen.relationship ?? seed?.common.relationship ?? '',
+        callPartner:
+          c.common?.callPartner ?? gen.callPartner ?? seed?.common.callPartner ?? '',
+        secondPerson:
+          c.common?.secondPerson ?? gen.secondPerson ?? seed?.common.secondPerson ?? '',
+        speechStyle:
+          c.common?.speechStyle ?? gen.speechStyle ?? seed?.common.speechStyle ?? '',
+        costume:
+          c.common?.costume ??
+          c.common?.costumeId ??
+          gen.costume ??
+          gen.costumeId ??
+          seed?.common.costume ??
+          '',
+        height: c.common?.height ?? seed?.common.height ?? '',
+        weight: c.common?.weight ?? seed?.common.weight ?? '',
+        bodyType: c.common?.bodyType ?? seed?.common.bodyType ?? '',
+        hobbies: c.common?.hobbies ?? seed?.common.hobbies ?? '',
+      },
+    };
+  });
+
+  const rawCharacterOrder = Array.isArray(raw.project?.characterOrder)
+    ? raw.project.characterOrder
+    : [];
+  const characterOrderMap = new Map<string, number>();
+  rawCharacterOrder.forEach((id, idx) => {
+    if (typeof id === 'string' && id && !characterOrderMap.has(id)) {
+      characterOrderMap.set(id, idx);
+    }
+  });
+
+  const normalizedCharacters = [...normalizedCharactersRaw].sort((a, b) => {
+    const idxA = characterOrderMap.get(a.id);
+    const idxB = characterOrderMap.get(b.id);
+    if (idxA !== undefined && idxB !== undefined) return idxA - idxB;
+    if (idxA !== undefined) return -1;
+    if (idxB !== undefined) return 1;
+    return 0;
+  });
+  const normalizedCharacterOrder = normalizedCharacters.map((c) => c.id);
+
+  const sceneFolderSet = new Set<string>();
+  const orderedSceneFolders: string[] = [];
+
+  for (const f of raw.project?.sceneFolders ?? []) {
+    const clean = sanitizeSceneFolderName(f);
+    if (clean && !sceneFolderSet.has(clean)) {
+      sceneFolderSet.add(clean);
+      orderedSceneFolders.push(clean);
+    }
+  }
+
+  const normalizedScenesRaw = (raw.scenes ?? []).map((s) => {
+    const cleanFolder = sanitizeSceneFolderName(s.folder);
+    if (cleanFolder && !sceneFolderSet.has(cleanFolder)) {
+      sceneFolderSet.add(cleanFolder);
+      orderedSceneFolders.push(cleanFolder);
+    }
+    return {
+      ...s,
+      filename: getSceneFilename(s),
+      folder: cleanFolder || undefined,
+      characters: Array.isArray(s.characters) ? s.characters : [],
+    };
+  });
+
+  const rawSceneOrder = Array.isArray(raw.project?.sceneOrder) ? raw.project.sceneOrder : [];
+  const sceneOrderMap = new Map<string, number>();
+  rawSceneOrder.forEach((id, idx) => {
+    if (typeof id === 'string' && id && !sceneOrderMap.has(id)) {
+      sceneOrderMap.set(id, idx);
+    }
+  });
+
+  const normalizedScenes = [...normalizedScenesRaw].sort((a, b) => {
+    const idxA = sceneOrderMap.get(a.sceneId);
+    const idxB = sceneOrderMap.get(b.sceneId);
+    if (idxA !== undefined && idxB !== undefined) return idxA - idxB;
+    if (idxA !== undefined) return -1;
+    if (idxB !== undefined) return 1;
+    return 0;
+  });
+  const normalizedSceneOrder = normalizedScenes.map((s) => s.sceneId);
+
+  const normalizedPlotsRaw = (raw.plots ?? []).map((p) => {
+    const cleanLinkedFolder = sanitizeSceneFolderName(p.linkedSceneFolder);
+    if (cleanLinkedFolder && !sceneFolderSet.has(cleanLinkedFolder)) {
+      sceneFolderSet.add(cleanLinkedFolder);
+      orderedSceneFolders.push(cleanLinkedFolder);
+    }
+    return {
+      ...p,
+      filename: getPlotFilename(p),
+      scope: p.scope ?? (p.chapterId ? 'chapter' : 'subplot'),
+      linkedSceneFolder: cleanLinkedFolder || undefined,
+      cards: Array.isArray(p.cards) ? p.cards : [],
+    };
+  });
+
+  const rawPlotOrder = Array.isArray(raw.project?.plotOrder) ? raw.project.plotOrder : [];
+  const plotOrderMap = new Map<string, number>();
+  rawPlotOrder.forEach((id, idx) => {
+    if (typeof id === 'string' && id && !plotOrderMap.has(id)) {
+      plotOrderMap.set(id, idx);
+    }
+  });
+
+  const normalizedPlots = [...normalizedPlotsRaw].sort((a, b) => {
+    const idxA = plotOrderMap.get(a.plotId);
+    const idxB = plotOrderMap.get(b.plotId);
+    if (idxA !== undefined && idxB !== undefined) return idxA - idxB;
+    if (idxA !== undefined) return -1;
+    if (idxB !== undefined) return 1;
+    return 0;
+  });
+  const normalizedPlotOrder = normalizedPlots.map((p) => p.plotId);
+
+  const normalizedDefaultCommonFields: CustomCommonFieldTemplate[] = [];
+  const seenDefaultCommonKeys = new Set<string>();
+  for (const item of raw.project?.defaultCustomCommonFields ?? []) {
+    const key = typeof item?.key === 'string' ? item.key.trim() : '';
+    const label = typeof item?.label === 'string' ? item.label.trim() : '';
+    if (key && label && !seenDefaultCommonKeys.has(key)) {
+      seenDefaultCommonKeys.add(key);
+      normalizedDefaultCommonFields.push({
+        key,
+        label,
+        multiline: Boolean(item.multiline),
+      });
+    }
+  }
+
+  const normalizedDefaultDualFields: DualProfileFieldDef[] = [];
+  const seenDefaultDualKeys = new Set<string>();
+  for (const item of raw.project?.defaultDualFields ?? []) {
+    const key = typeof item?.key === 'string' ? item.key.trim() : '';
+    const label = typeof item?.label === 'string' ? item.label.trim() : '';
+    if (key && label && !seenDefaultDualKeys.has(key)) {
+      seenDefaultDualKeys.add(key);
+      normalizedDefaultDualFields.push({
+        key,
+        label,
+        multiline: Boolean(item.multiline),
+      });
+    }
+  }
+
+  return {
+    ...raw,
+    project: {
+      ...raw.project,
+      characterFolders: orderedFolders,
+      sceneFolders: orderedSceneFolders,
+      characterOrder: normalizedCharacterOrder,
+      plotOrder: normalizedPlotOrder,
+      sceneOrder: normalizedSceneOrder,
+      defaultCustomCommonFields: normalizedDefaultCommonFields,
+      defaultDualFields: normalizedDefaultDualFields,
+    },
+    characters: normalizedCharacters,
+    plots: normalizedPlots,
+    scenes: normalizedScenes,
+  };
+}
+
+function openDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') {
+      reject(new Error('IndexedDB is unavailable'));
+      return;
+    }
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('IndexedDB open error'));
+  });
+}
+
+async function idbGet<T>(key: string): Promise<T | null> {
+  const db = await openDatabase();
+  try {
+    return await new Promise<T | null>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.get(key);
+      req.onsuccess = () => resolve((req.result as T | undefined) ?? null);
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function idbSet<T>(key: string, value: T): Promise<void> {
+  const db = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.put(value, key);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function idbDelete(key: string): Promise<void> {
+  const db = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.delete(key);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function writeTextFile(dir: FSDirectoryHandle, filename: string, content: string): Promise<void> {
+  const fileHandle = await dir.getFileHandle(filename, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(content);
+  await writable.close();
+}
+
+async function cleanupStaleFiles(
+  dir: FSDirectoryHandle,
+  extension: string,
+  expectedNames: Set<string>
+): Promise<void> {
+  if (typeof dir.removeEntry !== 'function') return;
+  for await (const entry of dir.values()) {
+    if (entry.kind === 'file' && entry.name.endsWith(extension) && !expectedNames.has(entry.name)) {
+      try {
+        await dir.removeEntry(entry.name);
+      } catch {
+        // Ignore if permission or lock prevents deletion
+      }
+    }
+  }
+}
+
+export async function verifyDirectoryPermission(
+  handle: FSDirectoryHandle,
+  mode: 'read' | 'readwrite' = 'readwrite',
+  requestIfNeeded = false
+): Promise<boolean> {
+  try {
+    if (typeof handle.queryPermission === 'function') {
+      const status = await handle.queryPermission({ mode });
+      if (status === 'granted') return true;
+      if (requestIfNeeded && typeof handle.requestPermission === 'function') {
+        return (await handle.requestPermission({ mode })) === 'granted';
+      }
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function loadWorkspaceFromBrowser(): Promise<{
+  workspace: ScenarioWorkspace;
+  storageMode: StorageMode;
+}> {
+  try {
+    const loaded = await idbGet<ScenarioWorkspace>(WORKSPACE_KEY);
+    if (loaded && loaded.project && Array.isArray(loaded.scenes)) {
+      return { workspace: normalizeWorkspace(loaded), storageMode: 'indexeddb' };
+    }
+
+    await saveWorkspaceToBrowser(INITIAL_WORKSPACE);
+    return { workspace: INITIAL_WORKSPACE, storageMode: 'indexeddb' };
+  } catch {
+    try {
+      const raw = localStorage.getItem(LS_FALLBACK_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as ScenarioWorkspace;
+        if (parsed?.project && Array.isArray(parsed.scenes)) {
+          return { workspace: normalizeWorkspace(parsed), storageMode: 'localstorage' };
+        }
+      }
+      localStorage.setItem(LS_FALLBACK_KEY, JSON.stringify(INITIAL_WORKSPACE));
+    } catch {
+      // In-memory only if both IDB and localStorage are unavailable
+    }
+    return { workspace: INITIAL_WORKSPACE, storageMode: 'localstorage' };
+  }
+}
+
+export async function saveWorkspaceToBrowser(
+  workspace: ScenarioWorkspace
+): Promise<StorageMode> {
+  try {
+    await idbSet(WORKSPACE_KEY, workspace);
+    return 'indexeddb';
+  } catch {
+    try {
+      localStorage.setItem(LS_FALLBACK_KEY, JSON.stringify(workspace));
+    } catch {
+      // Ignore storage quota errors
+    }
+    return 'localstorage';
+  }
+}
+
+export async function writeWorkspaceToDirectory(
+  rootDir: FSDirectoryHandle,
+  workspace: ScenarioWorkspace
+): Promise<void> {
+  const projectToWrite: ProjectData = {
+    ...workspace.project,
+    characterOrder: workspace.characters.map((c) => c.id),
+    plotOrder: workspace.plots.map((p) => p.plotId),
+    sceneOrder: workspace.scenes.map((s) => s.sceneId),
+    defaultCustomCommonFields: workspace.project.defaultCustomCommonFields ?? [],
+    defaultDualFields: workspace.project.defaultDualFields ?? [],
+  };
+  await writeTextFile(rootDir, 'project.json', JSON.stringify(projectToWrite, null, 2));
+
+  const charDir = await rootDir.getDirectoryHandle('characters', { create: true });
+  const expectedRootCharFiles = new Set<string>();
+  const expectedSubdirFiles = new Map<string, Set<string>>();
+
+  // Ensure all defined character folders exist as real directories on disk
+  for (const rawFolder of workspace.project.characterFolders ?? []) {
+    const clean = sanitizeCharacterFolderName(rawFolder);
+    if (clean && !expectedSubdirFiles.has(clean)) {
+      expectedSubdirFiles.set(clean, new Set<string>());
+    }
+  }
+
+  for (const char of workspace.characters) {
+    const fname = getCharacterFilename(char);
+    const folder = sanitizeCharacterFolderName(char.folder);
+    const serialized = JSON.stringify(
+      { ...char, folder: folder || undefined, filename: fname },
+      null,
+      2
+    );
+
+    if (folder) {
+      let set = expectedSubdirFiles.get(folder);
+      if (!set) {
+        set = new Set<string>();
+        expectedSubdirFiles.set(folder, set);
+      }
+      set.add(fname);
+      const subDir = await charDir.getDirectoryHandle(folder, { create: true });
+      await writeTextFile(subDir, fname, serialized);
+    } else {
+      expectedRootCharFiles.add(fname);
+      await writeTextFile(charDir, fname, serialized);
+    }
+  }
+
+  await cleanupStaleFiles(charDir, '.json', expectedRootCharFiles);
+
+  // Clean up stale files inside active subdirectories and remove obsolete subdirectories
+  for (const [folderName, expectedFiles] of expectedSubdirFiles.entries()) {
+    const subDir = await charDir.getDirectoryHandle(folderName, { create: true });
+    await cleanupStaleFiles(subDir, '.json', expectedFiles);
+  }
+
+  if (typeof charDir.removeEntry === 'function') {
+    for await (const entry of charDir.values()) {
+      if (entry.kind === 'directory' && !expectedSubdirFiles.has(entry.name)) {
+        try {
+          await charDir.removeEntry(entry.name, { recursive: true });
+        } catch {
+          // Ignore if permission or lock prevents removal
+        }
+      }
+    }
+  }
+
+  const plotDir = await rootDir.getDirectoryHandle('plots', { create: true });
+  const expectedPlotFiles = new Set<string>();
+  for (const plot of workspace.plots) {
+    const fname = getPlotFilename(plot);
+    expectedPlotFiles.add(fname);
+    await writeTextFile(plotDir, fname, JSON.stringify({ ...plot, filename: fname }, null, 2));
+  }
+  await cleanupStaleFiles(plotDir, '.json', expectedPlotFiles);
+
+  const sceneDir = await rootDir.getDirectoryHandle('scenes', { create: true });
+  const expectedRootSceneFiles = new Set<string>();
+  const expectedSceneSubdirFiles = new Map<string, Set<string>>();
+
+  // Ensure all defined scene folders exist as real directories on disk
+  for (const rawFolder of workspace.project.sceneFolders ?? []) {
+    const clean = sanitizeSceneFolderName(rawFolder);
+    if (clean && !expectedSceneSubdirFiles.has(clean)) {
+      expectedSceneSubdirFiles.set(clean, new Set<string>());
+    }
+  }
+
+  for (const scene of workspace.scenes) {
+    const fname = getSceneFilename(scene);
+    const folder = sanitizeSceneFolderName(scene.folder);
+    const serialized = serializeSceneMarkdown(scene);
+
+    if (folder) {
+      let set = expectedSceneSubdirFiles.get(folder);
+      if (!set) {
+        set = new Set<string>();
+        expectedSceneSubdirFiles.set(folder, set);
+      }
+      set.add(fname);
+      const subDir = await sceneDir.getDirectoryHandle(folder, { create: true });
+      await writeTextFile(subDir, fname, serialized);
+    } else {
+      expectedRootSceneFiles.add(fname);
+      await writeTextFile(sceneDir, fname, serialized);
+    }
+  }
+
+  await cleanupStaleFiles(sceneDir, '.md', expectedRootSceneFiles);
+
+  // Clean up stale files inside active scene subdirectories and remove obsolete subdirectories
+  for (const [folderName, expectedFiles] of expectedSceneSubdirFiles.entries()) {
+    const subDir = await sceneDir.getDirectoryHandle(folderName, { create: true });
+    await cleanupStaleFiles(subDir, '.md', expectedFiles);
+  }
+
+  if (typeof sceneDir.removeEntry === 'function') {
+    for await (const entry of sceneDir.values()) {
+      if (entry.kind === 'directory' && !expectedSceneSubdirFiles.has(entry.name)) {
+        try {
+          await sceneDir.removeEntry(entry.name, { recursive: true });
+        } catch {
+          // Ignore if permission or lock prevents removal
+        }
+      }
+    }
+  }
+}
+
+export async function readWorkspaceFromDirectory(
+  rootDir: FSDirectoryHandle
+): Promise<ScenarioWorkspace | null> {
+  try {
+    const projectHandle = await rootDir.getFileHandle('project.json');
+    const projectFile = await projectHandle.getFile();
+    const project = JSON.parse(await projectFile.text()) as ProjectData;
+
+    const characters: CharacterData[] = [];
+    const discoveredFolders: string[] = [];
+    try {
+      const charDir = await rootDir.getDirectoryHandle('characters');
+      for await (const entry of charDir.values()) {
+        if (entry.kind === 'file' && entry.name.endsWith('.json')) {
+          const f = await entry.getFile();
+          const parsed = JSON.parse(await f.text()) as CharacterData;
+          characters.push({ ...parsed, folder: undefined, filename: entry.name });
+        } else if (entry.kind === 'directory') {
+          const folderName = sanitizeCharacterFolderName(entry.name);
+          if (folderName) {
+            discoveredFolders.push(folderName);
+            for await (const subEntry of entry.values()) {
+              if (subEntry.kind === 'file' && subEntry.name.endsWith('.json')) {
+                const f = await subEntry.getFile();
+                const parsed = JSON.parse(await f.text()) as CharacterData;
+                characters.push({
+                  ...parsed,
+                  folder: folderName,
+                  filename: subEntry.name,
+                });
+              }
+            }
+          }
+        }
+      }
+      characters.sort((a, b) =>
+        getCharacterRelativePath(a).localeCompare(getCharacterRelativePath(b), 'ja')
+      );
+    } catch {
+      // Optional folder
+    }
+
+    const mergedFolders = Array.from(
+      new Set([
+        ...(project.characterFolders ?? []).map(sanitizeCharacterFolderName).filter(Boolean),
+        ...discoveredFolders,
+      ])
+    );
+
+    const plots: PlotData[] = [];
+    try {
+      const plotDir = await rootDir.getDirectoryHandle('plots');
+      for await (const entry of plotDir.values()) {
+        if (entry.kind === 'file' && entry.name.endsWith('.json')) {
+          const f = await entry.getFile();
+          const parsed = JSON.parse(await f.text()) as PlotData;
+          plots.push({ ...parsed, filename: entry.name });
+        }
+      }
+      plots.sort((a, b) => getPlotFilename(a).localeCompare(getPlotFilename(b), 'ja'));
+    } catch {
+      // Optional folder
+    }
+
+    const scenes: SceneData[] = [];
+    const discoveredSceneFolders: string[] = [];
+    try {
+      const sceneDir = await rootDir.getDirectoryHandle('scenes');
+      for await (const entry of sceneDir.values()) {
+        if (entry.kind === 'file' && entry.name.endsWith('.md')) {
+          const f = await entry.getFile();
+          scenes.push({
+            ...parseSceneMarkdown(entry.name, await f.text()),
+            folder: undefined,
+          });
+        } else if (entry.kind === 'directory') {
+          const folderName = sanitizeSceneFolderName(entry.name);
+          if (folderName) {
+            discoveredSceneFolders.push(folderName);
+            for await (const subEntry of entry.values()) {
+              if (subEntry.kind === 'file' && subEntry.name.endsWith('.md')) {
+                const f = await subEntry.getFile();
+                scenes.push({
+                  ...parseSceneMarkdown(subEntry.name, await f.text()),
+                  folder: folderName,
+                });
+              }
+            }
+          }
+        }
+      }
+      scenes.sort((a, b) => getSceneRelativePath(a).localeCompare(getSceneRelativePath(b), 'ja'));
+    } catch {
+      // Optional folder
+    }
+
+    const mergedSceneFolders = Array.from(
+      new Set([
+        ...(project.sceneFolders ?? []).map(sanitizeSceneFolderName).filter(Boolean),
+        ...discoveredSceneFolders,
+      ])
+    );
+
+    if (!project || !project.title) return null;
+    return normalizeWorkspace({
+      project: {
+        ...project,
+        characterFolders: mergedFolders,
+        sceneFolders: mergedSceneFolders,
+      },
+      characters,
+      plots,
+      scenes,
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function connectLocalDirectory(
+  _currentWorkspace?: ScenarioWorkspace
+): Promise<DirectoryConnectResult> {
+  if (!canUseFileSystemAccess()) {
+    return {
+      status: 'fallback',
+      message:
+        '現在のブラウザは File System Access API に非対応のため、IndexedDB への自動保存を継続します。',
+    };
+  }
+
+  try {
+    const handle = await window.showDirectoryPicker!({ mode: 'readwrite' });
+    const existing = await readWorkspaceFromDirectory(handle);
+    if (existing) {
+      return {
+        status: 'connected',
+        handle,
+        loadedWorkspace: existing,
+        message: `ローカルフォルダ「${handle.name}」からプロジェクトを読み込みました。`,
+      };
+    }
+
+    return {
+      status: 'needs-init-choice',
+      handle,
+      message: `ローカルフォルダ「${handle.name}」の開始方法を選択してください。`,
+    };
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      return {
+        status: 'cancelled',
+        message: 'フォルダ選択がキャンセルされました。',
+      };
+    }
+    return {
+      status: 'fallback',
+      message:
+        'プレビュー（iframe）環境によりローカルフォルダ直接参照が制限されています。IndexedDB 自動保存で全機能がそのまま動作します。',
+    };
+  }
+}
+
+export function triggerDownload(
+  filename: string,
+  content: string,
+  mime = 'text/plain;charset=utf-8'
+): void {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function formatSnapshotTimestamp(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_` +
+    `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  );
+}
+
+function computeUtf8ByteSize(text: string): number {
+  if (typeof TextEncoder !== 'undefined') {
+    return new TextEncoder().encode(text).length;
+  }
+  return text.length * 2;
+}
+
+function parseSnapshotObject(
+  raw: unknown,
+  fallbackFilename?: string,
+  rawByteSize?: number
+): HistorySnapshot | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Partial<HistorySnapshot> & { workspace?: ScenarioWorkspace };
+  if (!obj.workspace || !obj.workspace.project || !Array.isArray(obj.workspace.scenes)) {
+    return null;
+  }
+  const normalizedWs = normalizeWorkspace(obj.workspace);
+  const createdAt =
+    typeof obj.createdAt === 'string' && !Number.isNaN(Date.parse(obj.createdAt))
+      ? obj.createdAt
+      : new Date().toISOString();
+  const filename =
+    typeof obj.filename === 'string' && obj.filename.trim()
+      ? obj.filename.trim()
+      : fallbackFilename || `snapshot_${formatSnapshotTimestamp(new Date(createdAt))}.json`;
+  const id = typeof obj.id === 'string' && obj.id.trim() ? obj.id.trim() : filename;
+  const reason: HistorySnapshotReason = obj.reason === 'manual' ? 'manual' : 'auto';
+  const byteSize =
+    typeof obj.byteSize === 'number' && obj.byteSize > 0
+      ? obj.byteSize
+      : rawByteSize ?? computeUtf8ByteSize(JSON.stringify(normalizedWs));
+
+  return {
+    id,
+    filename,
+    createdAt,
+    reason,
+    projectTitle:
+      typeof obj.projectTitle === 'string' && obj.projectTitle.trim()
+        ? obj.projectTitle
+        : normalizedWs.project.title,
+    sceneCount: normalizedWs.scenes.length,
+    characterCount: normalizedWs.characters.length,
+    plotCount: normalizedWs.plots.length,
+    byteSize,
+    workspace: normalizedWs,
+  };
+}
+
+function rotateHistorySnapshots(
+  snapshots: HistorySnapshot[],
+  maxCount = MAX_HISTORY_SNAPSHOTS
+): HistorySnapshot[] {
+  const sorted = [...snapshots].sort((a, b) => {
+    const timeDiff = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    if (timeDiff !== 0) return timeDiff;
+    return b.filename.localeCompare(a.filename);
+  });
+
+  const seen = new Set<string>();
+  const deduped: HistorySnapshot[] = [];
+  for (const snap of sorted) {
+    const key = snap.filename || snap.id;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(snap);
+    }
+    if (deduped.length >= maxCount) break;
+  }
+  return deduped;
+}
+
+function createHistorySnapshotRecord(
+  workspace: ScenarioWorkspace,
+  reason: HistorySnapshotReason,
+  existingFilenames: Set<string>
+): HistorySnapshot {
+  const now = new Date();
+  const createdAt = now.toISOString();
+  const stamp = formatSnapshotTimestamp(now);
+  let filename = `snapshot_${stamp}.json`;
+  let suffix = 2;
+  while (existingFilenames.has(filename)) {
+    filename = `snapshot_${stamp}_${suffix}.json`;
+    suffix++;
+  }
+
+  const clonedWorkspace = normalizeWorkspace(
+    JSON.parse(JSON.stringify(workspace)) as ScenarioWorkspace
+  );
+  const baseRecord: HistorySnapshot = {
+    id: `${stamp}_${Math.random().toString(36).slice(2, 7)}`,
+    filename,
+    createdAt,
+    reason,
+    projectTitle: clonedWorkspace.project.title,
+    sceneCount: clonedWorkspace.scenes.length,
+    characterCount: clonedWorkspace.characters.length,
+    plotCount: clonedWorkspace.plots.length,
+    byteSize: 0,
+    workspace: clonedWorkspace,
+  };
+  baseRecord.byteSize = computeUtf8ByteSize(JSON.stringify(baseRecord));
+  return baseRecord;
+}
+
+async function loadHistoryFromBrowser(): Promise<HistorySnapshot[]> {
+  try {
+    const stored = await idbGet<unknown[]>(HISTORY_KEY);
+    if (Array.isArray(stored)) {
+      const parsed = stored
+        .map((item) => parseSnapshotObject(item))
+        .filter((item): item is HistorySnapshot => item !== null);
+      return rotateHistorySnapshots(parsed);
+    }
+    return [];
+  } catch {
+    try {
+      const raw = localStorage.getItem(LS_HISTORY_FALLBACK_KEY);
+      if (!raw) return [];
+      const parsedArr = JSON.parse(raw) as unknown[];
+      if (!Array.isArray(parsedArr)) return [];
+      const parsed = parsedArr
+        .map((item) => parseSnapshotObject(item))
+        .filter((item): item is HistorySnapshot => item !== null);
+      return rotateHistorySnapshots(parsed);
+    } catch {
+      return [];
+    }
+  }
+}
+
+async function saveHistoryToBrowser(snapshots: HistorySnapshot[]): Promise<HistorySnapshot[]> {
+  const rotated = rotateHistorySnapshots(snapshots);
+  try {
+    await idbSet(HISTORY_KEY, rotated);
+    return rotated;
+  } catch {
+    // Respect localStorage quota by trimming oldest snapshots if needed
+    let trimmed = [...rotated];
+    while (trimmed.length > 0) {
+      try {
+        localStorage.setItem(LS_HISTORY_FALLBACK_KEY, JSON.stringify(trimmed));
+        return trimmed;
+      } catch {
+        trimmed = trimmed.slice(0, -1);
+      }
+    }
+    try {
+      localStorage.removeItem(LS_HISTORY_FALLBACK_KEY);
+    } catch {
+      // Ignore storage cleanup error
+    }
+    return [];
+  }
+}
+
+async function readHistoryFromDirectory(
+  rootDir: FSDirectoryHandle
+): Promise<HistorySnapshot[]> {
+  try {
+    const historyDir = await rootDir.getDirectoryHandle(HISTORY_DIR_NAME, { create: false });
+    const loaded: HistorySnapshot[] = [];
+    for await (const entry of historyDir.values()) {
+      if (entry.kind === 'file' && entry.name.endsWith('.json')) {
+        try {
+          const file = await entry.getFile();
+          const text = await file.text();
+          const parsed = parseSnapshotObject(
+            JSON.parse(text),
+            entry.name,
+            computeUtf8ByteSize(text)
+          );
+          if (parsed) loaded.push(parsed);
+        } catch {
+          // Skip unreadable or non-snapshot JSON files
+        }
+      }
+    }
+    return rotateHistorySnapshots(loaded);
+  } catch {
+    return [];
+  }
+}
+
+async function writeAndRotateHistoryInDirectory(
+  rootDir: FSDirectoryHandle,
+  snapshot: HistorySnapshot
+): Promise<HistorySnapshot[]> {
+  const historyDir = await rootDir.getDirectoryHandle(HISTORY_DIR_NAME, { create: true });
+  const serialized = JSON.stringify(snapshot, null, 2);
+  await writeTextFile(historyDir, snapshot.filename, serialized);
+
+  // Scan all snapshot files in history/ and rotate down to MAX_HISTORY_SNAPSHOTS
+  const allEntries: Array<{ filename: string; snapshot: HistorySnapshot }> = [];
+  for await (const entry of historyDir.values()) {
+    if (entry.kind === 'file' && entry.name.endsWith('.json')) {
+      try {
+        const file = await entry.getFile();
+        const text = await file.text();
+        const parsed = parseSnapshotObject(
+          JSON.parse(text),
+          entry.name,
+          computeUtf8ByteSize(text)
+        );
+        if (parsed) {
+          allEntries.push({ filename: entry.name, snapshot: parsed });
+        }
+      } catch {
+        // Leave unrelated non-snapshot JSON files untouched
+      }
+    }
+  }
+
+  const kept = rotateHistorySnapshots(
+    allEntries.map((e) => e.snapshot),
+    MAX_HISTORY_SNAPSHOTS
+  );
+  const keptFilenames = new Set(kept.map((s) => s.filename));
+
+  if (typeof historyDir.removeEntry === 'function') {
+    for (const entry of allEntries) {
+      if (!keptFilenames.has(entry.filename)) {
+        try {
+          await historyDir.removeEntry(entry.filename);
+        } catch {
+          // Ignore file removal lock errors
+        }
+      }
+    }
+  }
+
+  return kept;
+}
+
+async function deleteHistoryFileFromDirectory(
+  rootDir: FSDirectoryHandle,
+  filename: string
+): Promise<void> {
+  try {
+    const historyDir = await rootDir.getDirectoryHandle(HISTORY_DIR_NAME, { create: false });
+    if (typeof historyDir.removeEntry === 'function') {
+      await historyDir.removeEntry(filename);
+    }
+  } catch {
+    // Ignore if history/ folder or file does not exist
+  }
+}
+
+/**
+ * Hybrid persistence manager orchestrating File System Access API,
+ * IndexedDB, and localStorage fallback seamlessly.
+ */
+export class StorageManager {
+  private directoryHandle: FSDirectoryHandle | null = null;
+
+  getConnectedDirectory(): FSDirectoryHandle | null {
+    return this.directoryHandle;
+  }
+
+  setConnectedDirectory(handle: FSDirectoryHandle | null): void {
+    this.directoryHandle = handle;
+  }
+
+  async load(): Promise<StorageLoadResult> {
+    let pendingReconnectDirectoryName: string | undefined;
+
+    if (canUseFileSystemAccess()) {
+      try {
+        const storedHandle = await idbGet<FSDirectoryHandle>(DIR_HANDLE_KEY);
+        if (storedHandle) {
+          if (await verifyDirectoryPermission(storedHandle, 'readwrite', false)) {
+            const fromDisk = await readWorkspaceFromDirectory(storedHandle);
+            if (fromDisk) {
+              this.directoryHandle = storedHandle;
+              await saveWorkspaceToBrowser(fromDisk);
+              return {
+                workspace: fromDisk,
+                storageMode: 'filesystem',
+                directoryName: storedHandle.name,
+              };
+            }
+          } else {
+            pendingReconnectDirectoryName = storedHandle.name;
+          }
+        }
+      } catch {
+        // Fallback smoothly to browser storage
+      }
+    }
+
+    const browser = await loadWorkspaceFromBrowser();
+    return {
+      workspace: browser.workspace,
+      storageMode: browser.storageMode,
+      pendingReconnectDirectoryName,
+    };
+  }
+
+  async save(workspace: ScenarioWorkspace): Promise<{
+    storageMode: StorageMode;
+    directoryName?: string;
+  }> {
+    const browserMode = await saveWorkspaceToBrowser(workspace);
+
+    if (this.directoryHandle) {
+      await writeWorkspaceToDirectory(this.directoryHandle, workspace);
+      return {
+        storageMode: 'filesystem',
+        directoryName: this.directoryHandle.name,
+      };
+    }
+
+    return { storageMode: browserMode };
+  }
+
+  async connectDirectory(currentWorkspace?: ScenarioWorkspace): Promise<DirectoryConnectResult> {
+    const result = await connectLocalDirectory(currentWorkspace);
+    if (result.status === 'connected' && result.handle) {
+      this.directoryHandle = result.handle;
+      if (result.loadedWorkspace) {
+        await saveWorkspaceToBrowser(result.loadedWorkspace);
+      }
+      try {
+        await idbSet(DIR_HANDLE_KEY, result.handle);
+      } catch {
+        // Ignore if handle serialization in IndexedDB is unsupported
+      }
+    }
+    return result;
+  }
+
+  async initializeDirectory(
+    handle: FSDirectoryHandle,
+    workspace: ScenarioWorkspace
+  ): Promise<void> {
+    await writeWorkspaceToDirectory(handle, workspace);
+    this.directoryHandle = handle;
+    await saveWorkspaceToBrowser(workspace);
+    try {
+      await idbSet(DIR_HANDLE_KEY, handle);
+    } catch {
+      // Ignore if handle serialization in IndexedDB is unsupported
+    }
+  }
+
+  async reconnectStoredDirectory(): Promise<DirectoryConnectResult> {
+    if (!canUseFileSystemAccess()) {
+      return {
+        status: 'fallback',
+        message: '現在のブラウザは File System Access API に非対応です。',
+      };
+    }
+
+    try {
+      const storedHandle = await idbGet<FSDirectoryHandle>(DIR_HANDLE_KEY);
+      if (!storedHandle) {
+        return {
+          status: 'cancelled',
+          message: '再接続できる前回のフォルダ記録が見つかりませんでした。',
+        };
+      }
+
+      const granted = await verifyDirectoryPermission(storedHandle, 'readwrite', true);
+      if (!granted) {
+        return {
+          status: 'cancelled',
+          message: `フォルダ「${storedHandle.name}」へのアクセス許可が得られませんでした。`,
+        };
+      }
+
+      const existing = await readWorkspaceFromDirectory(storedHandle);
+      if (existing) {
+        this.directoryHandle = storedHandle;
+        await saveWorkspaceToBrowser(existing);
+        return {
+          status: 'connected',
+          handle: storedHandle,
+          loadedWorkspace: existing,
+          message: `フォルダ「${storedHandle.name}」へ再接続しました。`,
+        };
+      }
+
+      return {
+        status: 'needs-init-choice',
+        handle: storedHandle,
+        message: `フォルダ「${storedHandle.name}」の開始方法を選択してください。`,
+      };
+    } catch {
+      return {
+        status: 'fallback',
+        message: 'フォルダの再接続に失敗しました。「フォルダ連携」から再選択してください。',
+      };
+    }
+  }
+
+  async disconnectDirectory(): Promise<void> {
+    this.directoryHandle = null;
+    try {
+      await idbDelete(DIR_HANDLE_KEY);
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+
+  async resetToBrowserWorkspace(newWorkspace: ScenarioWorkspace): Promise<StorageMode> {
+    await this.disconnectDirectory();
+    return saveWorkspaceToBrowser(newWorkspace);
+  }
+
+  async pickParentDirectoryForNewProject(): Promise<ParentDirectoryPickResult> {
+    if (!canUseFileSystemAccess()) {
+      return {
+        status: 'unsupported',
+        message:
+          '現在のブラウザはローカルフォルダ作成（File System Access API）に非対応です。Google Chrome のご利用を推奨します。非対応環境ではメニュー内の「ブラウザ内データを初期化して新規作成（予備）」をご利用ください。',
+      };
+    }
+
+    try {
+      const handle = await window.showDirectoryPicker!({ mode: 'readwrite' });
+      return { status: 'picked', handle };
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return { status: 'cancelled' };
+      }
+      return {
+        status: 'restricted',
+        message:
+          '現在の表示環境（プレビュー iframe 等）ではローカルフォルダへの直接アクセスが制限されています。Google Chrome の通常タブまたは PWA ウィンドウから実行してください。',
+      };
+    }
+  }
+
+  async checkSubdirectoryExists(
+    parentDir: FSDirectoryHandle,
+    folderName: string
+  ): Promise<boolean> {
+    try {
+      await parentDir.getDirectoryHandle(folderName, { create: false });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async createProjectInNewSubdirectory(
+    parentDir: FSDirectoryHandle,
+    folderName: string,
+    workspace: ScenarioWorkspace
+  ): Promise<FSDirectoryHandle> {
+    const subDir = await parentDir.getDirectoryHandle(folderName, { create: true });
+    await this.initializeDirectory(subDir, workspace);
+    return subDir;
+  }
+
+  async listHistory(): Promise<HistorySnapshot[]> {
+    if (this.directoryHandle) {
+      const fromDisk = await readHistoryFromDirectory(this.directoryHandle);
+      await saveHistoryToBrowser(fromDisk);
+      return fromDisk;
+    }
+    return loadHistoryFromBrowser();
+  }
+
+  async saveHistorySnapshot(
+    workspace: ScenarioWorkspace,
+    reason: HistorySnapshotReason
+  ): Promise<{
+    snapshot: HistorySnapshot;
+    snapshots: HistorySnapshot[];
+    savedToDirectory: boolean;
+  }> {
+    const currentList = await this.listHistory();
+    const existingNames = new Set(currentList.map((s) => s.filename));
+    const snapshot = createHistorySnapshotRecord(workspace, reason, existingNames);
+
+    if (this.directoryHandle) {
+      const rotatedFromDisk = await writeAndRotateHistoryInDirectory(
+        this.directoryHandle,
+        snapshot
+      );
+      await saveHistoryToBrowser(rotatedFromDisk);
+      return {
+        snapshot,
+        snapshots: rotatedFromDisk,
+        savedToDirectory: true,
+      };
+    }
+
+    const rotatedInBrowser = await saveHistoryToBrowser([snapshot, ...currentList]);
+    return {
+      snapshot,
+      snapshots: rotatedInBrowser,
+      savedToDirectory: false,
+    };
+  }
+
+  async deleteHistorySnapshot(snapshotId: string): Promise<HistorySnapshot[]> {
+    const currentList = await this.listHistory();
+    const target = currentList.find((s) => s.id === snapshotId || s.filename === snapshotId);
+    if (target && this.directoryHandle) {
+      await deleteHistoryFileFromDirectory(this.directoryHandle, target.filename);
+    }
+    const nextList = currentList.filter(
+      (s) => s.id !== snapshotId && s.filename !== snapshotId
+    );
+    return saveHistoryToBrowser(nextList);
+  }
+}
+
+export const storageManager = new StorageManager();

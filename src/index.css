@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: "Noto Sans JP", system-ui, -apple-system, sans-serif;
+    --font-serif: "Shippori Mincho", "Yu Mincho", "Hiragino Mincho ProN", serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-feature-settings: "palt";
+  }
+}
+
+.font-editorial {
+  font-family: var(--font-serif);
+}
+
+.font-code {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Vertical Japanese Manuscript Mode */
+.writing-vertical {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  line-height: 2;
+  letter-spacing: 0.04em;
+}
+
+/* Subtle custom scrollbars for 3-pane IDE */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.25);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.45);
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Kotonoha Script",
+  "description": "人力執筆メインのローカルファースト・ノベル＆ゲームシナリオ制作ワークスペース（一般用／R18デュアルプロファイル一括切替・高速タイピング・PWA対応）",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
