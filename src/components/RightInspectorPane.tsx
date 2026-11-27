@@ -8,13 +8,15 @@ import {
   FileWarning,
   HelpCircle,
   Lock,
+  X,
 } from 'lucide-react';
-import type {
-  ActiveMode,
-  CharacterData,
-  ProofreadIssue,
-  SceneData,
-  SelectedItem,
+import {
+  STANDARD_CHARACTER_CATEGORIES,
+  type ActiveMode,
+  type CharacterData,
+  type ProofreadIssue,
+  type SceneData,
+  type SelectedItem,
 } from '../types/scenario';
 import {
   detectSpeakerOnLine,
@@ -33,6 +35,8 @@ interface RightInspectorPaneProps {
   cursorIndex: number;
   onJumpToLine: (line: number) => void;
   onInsertSnippet: (snippet: string, placeCaretBefore?: string) => void;
+  isOverlay?: boolean;
+  onClose?: () => void;
 }
 
 export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
@@ -43,6 +47,8 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
   cursorIndex,
   onJumpToLine,
   onInsertSnippet,
+  isOverlay = false,
+  onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<InspectorTab>('reference');
   const [manualCharId, setManualCharId] = useState<string>('');
@@ -184,6 +190,12 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
       { key: 'height', label: '身長' },
       { key: 'weight', label: '体重' },
       { key: 'bodyType', label: '体型 / 3サイズ' },
+      { key: 'hairstyle', label: '髪型・髪色' },
+      { key: 'facialFeatures', label: '顔立ち・瞳' },
+      { key: 'posture', label: 'ポーズ / 姿勢・所作' },
+      { key: 'skills', label: '特技' },
+      { key: 'specialAbilities', label: '特殊能力' },
+      { key: 'weaknesses', label: '弱点・苦手' },
     ];
     for (const opt of optionalStandard) {
       const val = String(resolvedChar[opt.key] ?? '');
@@ -194,6 +206,27 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
           notation: `{{${resolvedChar.id}.${String(opt.key)}}}`,
           value: val,
           locked: lockedSet.has(String(opt.key)),
+        });
+      }
+    }
+
+    for (const rel of resolvedChar.relations) {
+      const target = characters.find((c) => c.id === rel.targetCharacterId);
+      const targetLabel = target?.shortName || target?.common.name || rel.targetCharacterId;
+      items.push({
+        key: `callPartner.${rel.targetCharacterId}`,
+        label: `相手の呼び方（→${targetLabel}）`,
+        notation: `{{${resolvedChar.id}.callPartner.${rel.targetCharacterId}}}`,
+        value: rel.callPartner,
+        locked: false,
+      });
+      if (rel.relationship) {
+        items.push({
+          key: `relationship.${rel.targetCharacterId}`,
+          label: `関係性（→${targetLabel}）`,
+          notation: `{{${resolvedChar.id}.relationship.${rel.targetCharacterId}}}`,
+          value: rel.relationship,
+          locked: false,
         });
       }
     }
@@ -219,7 +252,7 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
     }
 
     return items;
-  }, [resolvedChar]);
+  }, [resolvedChar, characters]);
 
   const copyVariableNotation = async (key: string, notation: string) => {
     try {
@@ -232,9 +265,15 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
   };
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-slate-200 bg-slate-50/70">
+    <aside
+      className={`flex h-full shrink-0 flex-col border-l border-slate-200 ${
+        isOverlay
+          ? 'w-[min(90vw,21rem)] bg-slate-50 shadow-xl'
+          : 'w-76 xl:w-80 bg-slate-50/70'
+      }`}
+    >
       {/* 3-Tab Header */}
-      <div className="flex border-b border-slate-200 bg-white">
+      <div className="flex items-center border-b border-slate-200 bg-white">
         <button
           type="button"
           onClick={() => setActiveTab('reference')}
@@ -284,6 +323,18 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
           <HelpCircle className="h-3.5 w-3.5 shrink-0" />
           <span>使い方</span>
         </button>
+
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            title="右パネルを閉じる"
+            aria-label="右パネルを閉じる"
+            className="mr-1.5 rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 shrink-0"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
       {/* Tab Body */}
@@ -333,10 +384,15 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                       ] as const
                     ).map(([label, val, fieldKey]) => {
                       const locked = resolvedChar.lockedFields.includes(fieldKey);
+                      const hasNewline = val.includes('\n');
                       return (
                         <div
                           key={fieldKey}
-                          className="flex items-center justify-between gap-2 rounded bg-slate-50 px-2 py-1"
+                          className={`rounded bg-slate-50 px-2 py-1 ${
+                            hasNewline
+                              ? 'space-y-0.5'
+                              : 'flex items-center justify-between gap-2'
+                          }`}
                         >
                           <dt className="flex items-center gap-1 text-slate-500">
                             <span>{label}</span>
@@ -346,29 +402,71 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                               </span>
                             )}
                           </dt>
-                          <dd className="font-medium text-slate-900 truncate">{val || '—'}</dd>
+                          <dd
+                            className={`font-medium text-slate-900 ${
+                              hasNewline ? 'whitespace-pre-wrap break-words leading-snug' : 'truncate'
+                            }`}
+                          >
+                            {val || '—'}
+                          </dd>
                         </div>
                       );
                     })}
                   </dl>
 
+                  {resolvedChar.relations.length > 0 && (
+                    <div className="space-y-1.5 border-t border-slate-100 pt-2">
+                      <div className="text-[11px] font-medium text-slate-500">
+                        他キャラへの呼び方・関係性
+                      </div>
+                      <div className="space-y-1.5">
+                        {resolvedChar.relations.map((rel) => {
+                          const target = characters.find((c) => c.id === rel.targetCharacterId);
+                          const targetLabel =
+                            target?.common.name ?? `未登録 (${rel.targetCharacterId})`;
+                          return (
+                            <div
+                              key={rel.targetCharacterId}
+                              className="rounded bg-slate-50 px-2 py-1.5 space-y-0.5"
+                            >
+                              <div className="flex items-center justify-between gap-2 text-xs">
+                                <span className="text-slate-500 truncate">→ {targetLabel}</span>
+                                <span className="font-medium text-slate-900 truncate">
+                                  {rel.callPartner || '—'}
+                                </span>
+                              </div>
+                              {rel.relationship && (
+                                <p className="text-[11px] leading-snug text-slate-500">
+                                  {rel.relationship}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="pt-1">
                     <div className="text-[11px] font-medium text-slate-500">口調</div>
-                    <p className="mt-0.5 text-xs leading-relaxed text-slate-700">
+                    <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
                       {resolvedChar.speechStyle}
                     </p>
                   </div>
 
                   <div>
                     <div className="text-[11px] font-medium text-slate-500">性格</div>
-                    <p className="mt-0.5 text-xs leading-relaxed text-slate-700">
+                    <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
                       {resolvedChar.personality}
                     </p>
                   </div>
 
-                  {(resolvedChar.height ||
+                  {(resolvedChar.hairstyle ||
+                    resolvedChar.facialFeatures ||
+                    resolvedChar.height ||
                     resolvedChar.weight ||
                     resolvedChar.bodyType ||
+                    resolvedChar.posture ||
                     resolvedChar.hobbies) && (
                     <div className="space-y-1.5 border-t border-slate-100 pt-2">
                       {(resolvedChar.height || resolvedChar.weight || resolvedChar.bodyType) && (
@@ -376,10 +474,36 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                           <div className="text-[11px] font-medium text-slate-500">
                             体格（身長 / 体重 / 体型・3サイズ）
                           </div>
-                          <p className="mt-0.5 text-xs text-slate-700 tabular-nums">
+                          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-slate-700 tabular-nums">
                             {[resolvedChar.height, resolvedChar.weight, resolvedChar.bodyType]
                               .filter(Boolean)
                               .join(' · ')}
+                          </p>
+                        </div>
+                      )}
+                      {resolvedChar.hairstyle && (
+                        <div>
+                          <div className="text-[11px] font-medium text-slate-500">髪型・髪色</div>
+                          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
+                            {resolvedChar.hairstyle}
+                          </p>
+                        </div>
+                      )}
+                      {resolvedChar.facialFeatures && (
+                        <div>
+                          <div className="text-[11px] font-medium text-slate-500">顔立ち・瞳</div>
+                          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
+                            {resolvedChar.facialFeatures}
+                          </p>
+                        </div>
+                      )}
+                      {resolvedChar.posture && (
+                        <div>
+                          <div className="text-[11px] font-medium text-slate-500">
+                            ポーズ / 姿勢・所作
+                          </div>
+                          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
+                            {resolvedChar.posture}
                           </p>
                         </div>
                       )}
@@ -388,7 +512,7 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                           <div className="text-[11px] font-medium text-slate-500">
                             趣味・趣向
                           </div>
-                          <p className="mt-0.5 text-xs leading-relaxed text-slate-700">
+                          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
                             {resolvedChar.hobbies}
                           </p>
                         </div>
@@ -396,42 +520,178 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                     </div>
                   )}
 
-                  {resolvedChar.extraCommonFields.length > 0 && (
-                    <dl className="space-y-1.5 border-t border-slate-100 pt-2 text-xs">
-                      {resolvedChar.extraCommonFields.map((ef) => (
-                        <div
-                          key={ef.key}
-                          className="flex items-center justify-between gap-2 rounded bg-slate-50 px-2 py-1"
-                        >
-                          <dt className="text-slate-500 truncate">{ef.label}</dt>
-                          <dd className="font-medium text-slate-900 truncate">
-                            {ef.value || '—'}
-                          </dd>
+                  {(resolvedChar.skills ||
+                    resolvedChar.specialAbilities ||
+                    resolvedChar.weaknesses) && (
+                    <div className="space-y-1.5 border-t border-slate-100 pt-2">
+                      <div className="text-[10px] font-semibold tracking-wide text-slate-400">
+                        能力・スキル
+                      </div>
+                      {resolvedChar.skills && (
+                        <div>
+                          <div className="text-[11px] font-medium text-slate-500">特技</div>
+                          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
+                            {resolvedChar.skills}
+                          </p>
                         </div>
-                      ))}
-                    </dl>
+                      )}
+                      {resolvedChar.specialAbilities && (
+                        <div>
+                          <div className="text-[11px] font-medium text-slate-500">特殊能力</div>
+                          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
+                            {resolvedChar.specialAbilities}
+                          </p>
+                        </div>
+                      )}
+                      {resolvedChar.weaknesses && (
+                        <div>
+                          <div className="text-[11px] font-medium text-slate-500">弱点・苦手</div>
+                          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
+                            {resolvedChar.weaknesses}
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   )}
+
+                  {resolvedChar.extraCommonFields.length > 0 &&
+                    (() => {
+                      const hasAnyCategory = resolvedChar.extraCommonFields.some(
+                        (ef) => Boolean(ef.category)
+                      );
+                      if (!hasAnyCategory) {
+                        return (
+                          <dl className="space-y-1.5 border-t border-slate-100 pt-2 text-xs">
+                            {resolvedChar.extraCommonFields.map((ef) => {
+                              const hasNewline = ef.value.includes('\n');
+                              return (
+                                <div
+                                  key={ef.key}
+                                  className={`rounded bg-slate-50 px-2 py-1 ${
+                                    hasNewline
+                                      ? 'space-y-0.5'
+                                      : 'flex items-center justify-between gap-2'
+                                  }`}
+                                >
+                                  <dt className="text-slate-500 truncate">{ef.label}</dt>
+                                  <dd
+                                    className={`font-medium text-slate-900 ${
+                                      hasNewline
+                                        ? 'whitespace-pre-wrap break-words leading-snug'
+                                        : 'truncate'
+                                    }`}
+                                  >
+                                    {ef.value || '—'}
+                                  </dd>
+                                </div>
+                              );
+                            })}
+                          </dl>
+                        );
+                      }
+
+                      const grouped = new Map<
+                        string,
+                        typeof resolvedChar.extraCommonFields
+                      >();
+                      for (const ef of resolvedChar.extraCommonFields) {
+                        const cat = ef.category?.trim() || '追加した共通項目';
+                        const list = grouped.get(cat) ?? [];
+                        list.push(ef);
+                        grouped.set(cat, list);
+                      }
+
+                      const orderedCategories: string[] = [];
+                      for (const std of STANDARD_CHARACTER_CATEGORIES) {
+                        if (grouped.has(std)) orderedCategories.push(std);
+                      }
+                      for (const cat of grouped.keys()) {
+                        if (
+                          cat !== '追加した共通項目' &&
+                          !orderedCategories.includes(cat)
+                        ) {
+                          orderedCategories.push(cat);
+                        }
+                      }
+                      if (grouped.has('追加した共通項目')) {
+                        orderedCategories.push('追加した共通項目');
+                      }
+
+                      return (
+                        <div className="space-y-2.5 border-t border-slate-100 pt-2">
+                          {orderedCategories.map((cat) => {
+                            const list = grouped.get(cat) ?? [];
+                            return (
+                              <div key={cat} className="space-y-1">
+                                <div className="text-[10px] font-semibold tracking-wide text-slate-400">
+                                  {cat}
+                                </div>
+                                <dl className="space-y-1.5 text-xs">
+                                  {list.map((ef) => {
+                                    const hasNewline = ef.value.includes('\n');
+                                    return (
+                                      <div
+                                        key={ef.key}
+                                        className={`rounded bg-slate-50 px-2 py-1 ${
+                                          hasNewline
+                                            ? 'space-y-0.5'
+                                            : 'flex items-center justify-between gap-2'
+                                        }`}
+                                      >
+                                        <dt className="text-slate-500 truncate">{ef.label}</dt>
+                                        <dd
+                                          className={`font-medium text-slate-900 ${
+                                            hasNewline
+                                              ? 'whitespace-pre-wrap break-words leading-snug'
+                                              : 'truncate'
+                                          }`}
+                                        >
+                                          {ef.value || '—'}
+                                        </dd>
+                                      </div>
+                                    );
+                                  })}
+                                </dl>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
 
                   {resolvedChar.customFields.length > 0 && (
                     <dl className="space-y-1.5 border-t border-slate-100 pt-2 text-xs">
-                      {resolvedChar.customFields.map((cf) => (
-                        <div
-                          key={cf.key}
-                          className="flex items-center justify-between gap-2 rounded bg-slate-50 px-2 py-1"
-                        >
-                          <dt className="flex items-center gap-1 text-slate-500 truncate">
-                            <span className="truncate">{cf.label}</span>
-                            {cf.locked && (
-                              <span title="一般モード値で固定中">
-                                <Lock className="h-3 w-3 text-amber-600" />
-                              </span>
-                            )}
-                          </dt>
-                          <dd className="font-medium text-slate-900 truncate">
-                            {cf.value || '—'}
-                          </dd>
-                        </div>
-                      ))}
+                      {resolvedChar.customFields.map((cf) => {
+                        const hasNewline = cf.value.includes('\n');
+                        return (
+                          <div
+                            key={cf.key}
+                            className={`rounded bg-slate-50 px-2 py-1 ${
+                              hasNewline
+                                ? 'space-y-0.5'
+                                : 'flex items-center justify-between gap-2'
+                            }`}
+                          >
+                            <dt className="flex items-center gap-1 text-slate-500 truncate">
+                              <span className="truncate">{cf.label}</span>
+                              {cf.locked && (
+                                <span title="一般モード値で固定中">
+                                  <Lock className="h-3 w-3 text-amber-600" />
+                                </span>
+                              )}
+                            </dt>
+                            <dd
+                              className={`font-medium text-slate-900 ${
+                                hasNewline
+                                  ? 'whitespace-pre-wrap break-words leading-snug'
+                                  : 'truncate'
+                              }`}
+                            >
+                              {cf.value || '—'}
+                            </dd>
+                          </div>
+                        );
+                      })}
                     </dl>
                   )}
                 </div>

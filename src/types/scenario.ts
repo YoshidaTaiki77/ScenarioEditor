@@ -17,20 +17,45 @@ export interface CharacterCommon {
   height?: string;
   weight?: string;
   bodyType?: string;
+  hairstyle?: string;
+  facialFeatures?: string;
+  posture?: string;
   hobbies?: string;
+  skills?: string;
+  specialAbilities?: string;
+  weaknesses?: string;
 }
+
+export interface CharacterRelation {
+  targetCharacterId: string;
+  callPartner: string;
+  relationship: string;
+}
+
+export const STANDARD_CHARACTER_CATEGORIES = [
+  '基本情報',
+  '話し方・セリフ',
+  '対人・呼び方・関係性',
+  '外見・体格',
+  '性格・パーソナリティ',
+  '能力・スキル',
+] as const;
+
+export type StandardCharacterCategory = (typeof STANDARD_CHARACTER_CATEGORIES)[number];
 
 export interface CustomCommonField {
   key: string;
   label: string;
   value: string;
   multiline?: boolean;
+  category?: string;
 }
 
 export interface CustomCommonFieldTemplate {
   key: string;
   label: string;
   multiline?: boolean;
+  category?: string;
 }
 
 export interface DualProfileFieldDef {
@@ -57,6 +82,7 @@ export interface CharacterData {
   folder?: string; // Subfolder name under characters/, e.g. "メイン"
   shortName: string; // Dialogue prefix name, e.g. "蓮" or "栞"
   common: CharacterCommon;
+  relations?: CharacterRelation[];
   customCommonFields?: CustomCommonField[];
   commonFieldLabels?: Record<string, string>;
   hiddenCommonFields?: string[];
@@ -77,7 +103,13 @@ export interface ResolvedCharacter {
   height: string;
   weight: string;
   bodyType: string;
+  hairstyle: string;
+  facialFeatures: string;
+  posture: string;
   hobbies: string;
+  skills: string;
+  specialAbilities: string;
+  weaknesses: string;
   firstPerson: string;
   ageDisplay: string;
   relationship: string;
@@ -85,8 +117,9 @@ export interface ResolvedCharacter {
   secondPerson: string;
   speechStyle: string;
   costume: string;
+  relations: CharacterRelation[];
   hiddenCommonFields: string[];
-  extraCommonFields: Array<{ key: string; label: string; value: string }>;
+  extraCommonFields: Array<{ key: string; label: string; value: string; category?: string }>;
   customFields: Array<{ key: string; label: string; value: string; locked: boolean }>;
   allFields: Record<string, string>;
   lockedFields: LockableCharacterField[];
@@ -171,6 +204,8 @@ export interface ProjectData {
   sceneOrder?: string[];
   defaultCustomCommonFields?: CustomCommonFieldTemplate[];
   defaultDualFields?: DualProfileFieldDef[];
+  characterFieldMultiline?: Record<string, boolean>;
+  customCharacterCategories?: string[];
 }
 
 export interface ScenarioWorkspace {

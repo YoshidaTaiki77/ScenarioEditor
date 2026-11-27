@@ -907,7 +907,7 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
               : 'mx-auto w-full max-w-4xl space-y-2.5'
             : compact
               ? 'space-y-3'
-              : 'grid grid-cols-1 md:grid-cols-2 gap-4 content-start'
+              : 'grid grid-cols-1 @2xl:grid-cols-2 gap-4 content-start'
         }`}
       >
         {sortedCards.map((card, index) => {
@@ -1021,7 +1021,7 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
           const renderKeyTakeawaysPreview = () => {
             if (keyTakeaways.length === 0) return null;
             return (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-1 @lg:grid-cols-2 gap-1.5">
                 {keyTakeaways.map(({ key, label, text, Icon }) => (
                   <div
                     key={key}
@@ -1054,7 +1054,7 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
                 />
               </label>
 
-              <div className={`grid gap-2 ${compact ? 'grid-cols-1' : 'grid-cols-2'}`}>
+              <div className={`grid gap-2 ${compact ? 'grid-cols-1' : 'grid-cols-1 @lg:grid-cols-2'}`}>
                 <label className="block space-y-0.5">
                   <span className="text-[10px] font-medium text-slate-500">
                     分岐条件 / ルート

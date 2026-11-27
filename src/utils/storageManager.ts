@@ -1,14 +1,16 @@
-import type {
-  CharacterData,
-  CustomCommonFieldTemplate,
-  DualProfileFieldDef,
-  HistorySnapshot,
-  HistorySnapshotReason,
-  PlotData,
-  ProjectData,
-  ScenarioWorkspace,
-  SceneData,
-  StorageMode,
+import {
+  STANDARD_CHARACTER_CATEGORIES,
+  type CharacterData,
+  type CharacterRelation,
+  type CustomCommonFieldTemplate,
+  type DualProfileFieldDef,
+  type HistorySnapshot,
+  type HistorySnapshotReason,
+  type PlotData,
+  type ProjectData,
+  type ScenarioWorkspace,
+  type SceneData,
+  type StorageMode,
 } from '../types/scenario';
 import { INITIAL_WORKSPACE } from '../data/initialProject';
 import { parseSceneMarkdown, serializeSceneMarkdown } from './scenarioEngine';
@@ -154,11 +156,38 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
       orderedFolders.push(cleanFolder);
     }
 
+    const normalizedRelations: CharacterRelation[] = [];
+    const seenTargetIds = new Set<string>();
+    if (Array.isArray(c.relations)) {
+      for (const rel of c.relations) {
+        const tid = typeof rel?.targetCharacterId === 'string' ? rel.targetCharacterId.trim() : '';
+        if (!tid || tid === c.id || seenTargetIds.has(tid)) continue;
+        seenTargetIds.add(tid);
+        normalizedRelations.push({
+          targetCharacterId: tid,
+          callPartner: typeof rel.callPartner === 'string' ? rel.callPartner : '',
+          relationship: typeof rel.relationship === 'string' ? rel.relationship : '',
+        });
+      }
+    }
+
+    const normalizedCustomCommonFields = Array.isArray(c.customCommonFields)
+      ? c.customCommonFields.map((f) => ({
+          key: f.key,
+          label: f.label,
+          value: typeof f.value === 'string' ? f.value : '',
+          multiline: Boolean(f.multiline),
+          category:
+            typeof f.category === 'string' && f.category.trim() ? f.category.trim() : undefined,
+        }))
+      : [];
+
     return {
       ...c,
       filename: getCharacterFilename(c),
       folder: cleanFolder || undefined,
-      customCommonFields: Array.isArray(c.customCommonFields) ? c.customCommonFields : [],
+      relations: normalizedRelations,
+      customCommonFields: normalizedCustomCommonFields,
       commonFieldLabels: {},
       hiddenCommonFields: [],
       dualFields: Array.isArray(c.dualFields) ? c.dualFields : [],
@@ -188,7 +217,13 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
         height: c.common?.height ?? seed?.common.height ?? '',
         weight: c.common?.weight ?? seed?.common.weight ?? '',
         bodyType: c.common?.bodyType ?? seed?.common.bodyType ?? '',
+        hairstyle: c.common?.hairstyle ?? seed?.common.hairstyle ?? '',
+        facialFeatures: c.common?.facialFeatures ?? seed?.common.facialFeatures ?? '',
+        posture: c.common?.posture ?? seed?.common.posture ?? '',
         hobbies: c.common?.hobbies ?? seed?.common.hobbies ?? '',
+        skills: c.common?.skills ?? seed?.common.skills ?? '',
+        specialAbilities: c.common?.specialAbilities ?? seed?.common.specialAbilities ?? '',
+        weaknesses: c.common?.weaknesses ?? seed?.common.weaknesses ?? '',
       },
     };
   });
@@ -294,12 +329,17 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
   for (const item of raw.project?.defaultCustomCommonFields ?? []) {
     const key = typeof item?.key === 'string' ? item.key.trim() : '';
     const label = typeof item?.label === 'string' ? item.label.trim() : '';
+    const category =
+      typeof item?.category === 'string' && item.category.trim()
+        ? item.category.trim()
+        : undefined;
     if (key && label && !seenDefaultCommonKeys.has(key)) {
       seenDefaultCommonKeys.add(key);
       normalizedDefaultCommonFields.push({
         key,
         label,
         multiline: Boolean(item.multiline),
+        category,
       });
     }
   }
@@ -319,6 +359,40 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
     }
   }
 
+  const normalizedFieldMultiline: Record<string, boolean> = {};
+  if (
+    raw.project?.characterFieldMultiline &&
+    typeof raw.project.characterFieldMultiline === 'object'
+  ) {
+    for (const [rawKey, rawVal] of Object.entries(raw.project.characterFieldMultiline)) {
+      const key = rawKey.trim();
+      if (key && typeof rawVal === 'boolean') {
+        normalizedFieldMultiline[key] = rawVal;
+      }
+    }
+  }
+
+  const standardCategorySet = new Set<string>(STANDARD_CHARACTER_CATEGORIES);
+  const customCategorySet = new Set<string>();
+  const normalizedCustomCategories: string[] = [];
+  const registerCustomCat = (rawCat?: string) => {
+    const clean = typeof rawCat === 'string' ? rawCat.trim() : '';
+    if (!clean || standardCategorySet.has(clean) || customCategorySet.has(clean)) return;
+    customCategorySet.add(clean);
+    normalizedCustomCategories.push(clean);
+  };
+  for (const cat of raw.project?.customCharacterCategories ?? []) {
+    registerCustomCat(cat);
+  }
+  for (const tpl of normalizedDefaultCommonFields) {
+    registerCustomCat(tpl.category);
+  }
+  for (const char of normalizedCharacters) {
+    for (const cf of char.customCommonFields ?? []) {
+      registerCustomCat(cf.category);
+    }
+  }
+
   return {
     ...raw,
     project: {
@@ -330,6 +404,8 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
       sceneOrder: normalizedSceneOrder,
       defaultCustomCommonFields: normalizedDefaultCommonFields,
       defaultDualFields: normalizedDefaultDualFields,
+      characterFieldMultiline: normalizedFieldMultiline,
+      customCharacterCategories: normalizedCustomCategories,
     },
     characters: normalizedCharacters,
     plots: normalizedPlots,

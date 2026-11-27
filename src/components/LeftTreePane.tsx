@@ -73,6 +73,8 @@ interface LeftTreePaneProps {
   onAddPlot: () => void;
   onDeletePlot: (plotId: string) => void;
   onReorderPlot: (sourcePlotId: string, targetPlotId: string, side: 'before' | 'after') => void;
+  isOverlay?: boolean;
+  onClose?: () => void;
 }
 
 function getVisibilityTag(visibility: VisibilityType): string {
@@ -115,6 +117,8 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
   onAddPlot,
   onDeletePlot,
   onReorderPlot,
+  isOverlay = false,
+  onClose,
 }) => {
   const [openFolders, setOpenFolders] = useState({
     characters: true,
@@ -548,12 +552,31 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
   };
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-slate-200 bg-slate-50/70 select-none">
+    <aside
+      className={`flex h-full shrink-0 flex-col border-r border-slate-200 select-none ${
+        isOverlay
+          ? 'w-[min(85vw,18rem)] bg-slate-50 shadow-xl'
+          : 'w-60 xl:w-64 bg-slate-50/70'
+      }`}
+    >
       <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2.5">
         <span className="text-xs font-semibold text-slate-700">プロジェクト構成</span>
-        <span className="font-code text-[11px] text-slate-400 tabular-nums">
-          {characters.length + plots.length + scenes.length} files
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="font-code text-[11px] text-slate-400 tabular-nums">
+            {characters.length + plots.length + scenes.length} files
+          </span>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              title="左パネルを閉じる"
+              aria-label="左パネルを閉じる"
+              className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-2.5 space-y-3 text-xs">

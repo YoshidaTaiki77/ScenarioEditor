@@ -160,9 +160,15 @@ export const UsageGuideTab: React.FC<UsageGuideTabProps> = ({
           },
           {
             title: 'キャラ変数記法と「設定参照」タブ',
-            body: '本文に変数記法を書いておくと、モード切替やキャラ設定の変更に合わせて書き出し時に自動展開されます。「設定参照」タブではカーソル行の話者を自動検出し、クリックで定型文や変数を挿入できます。',
-            codeLines: ['{{char_id.callPartner}}', '{{char_id.firstPerson}}', '{{char_id.costume}}'],
-            keywords: ['変数', '設定参照', '定型文', '展開', '一人称', '呼び方', '衣装'],
+            body: '本文に変数記法を書いておくと、モード切替やキャラ設定の変更に合わせて書き出し時に自動展開されます。キャラクター別の呼び方・関係性は末尾に相手IDを付けて参照でき、「設定参照」タブからクリックで挿入できます。',
+            codeLines: [
+              '{{char_id.callPartner}}',
+              '{{char_id.callPartner.target_id}}',
+              '{{char_id.relationship.target_id}}',
+              '{{char_id.firstPerson}}',
+              '{{char_id.costume}}',
+            ],
+            keywords: ['変数', '設定参照', '定型文', '展開', '一人称', '呼び方', '関係性', '衣装'],
           },
           {
             title: '高速校正タブ（AI不使用）',

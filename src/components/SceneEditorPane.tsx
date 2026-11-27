@@ -465,10 +465,10 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
           </div>
         </div>
 
-        {/* Main Split Container (Optional Plot Left + Script Right) */}
-        <div className="flex min-h-0 flex-1 overflow-hidden">
+        {/* Main Split Container (Optional Plot Left/Top + Script Right/Bottom) */}
+        <div className="flex min-h-0 flex-1 flex-col @3xl:flex-row overflow-hidden">
           {splitView && activePlot && (
-            <div className="w-[38%] min-w-[260px] max-w-[440px] border-r border-slate-200 overflow-hidden">
+            <div className="h-[42%] min-h-[200px] w-full shrink-0 border-b border-slate-200 overflow-hidden @3xl:h-auto @3xl:min-h-0 @3xl:w-[38%] @3xl:min-w-[260px] @3xl:max-w-[440px] @3xl:border-b-0 @3xl:border-r">
               <PlotBoard
                 plot={activePlot}
                 allPlots={allPlots}
@@ -489,10 +489,13 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
           )}
 
           {/* Editor + Live Preview Column */}
-          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
             {/* Typing Shortcut Hint Bar */}
-            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-4 py-1 text-[11px] text-slate-500">
-              <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/70 px-3 @xl:px-4 py-1 text-[11px] text-slate-500">
+              <span className="@xl:hidden truncate text-[10px] text-slate-400">
+                行頭 Tab で話者「」挿入
+              </span>
+              <div className="hidden @xl:flex flex-wrap items-center gap-3">
                 <span>
                   <kbd className="rounded border border-slate-300 bg-white px-1 font-code text-[10px]">
                     Tab
@@ -512,7 +515,7 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
                   「」内末尾で括弧抜け改行
                 </span>
               </div>
-              <span className="font-code tabular-nums text-slate-400">
+              <span className="font-code tabular-nums text-slate-400 shrink-0">
                 解決後 {charCount.toLocaleString()} 文字
               </span>
             </div>

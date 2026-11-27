@@ -25,7 +25,13 @@ const STANDARD_COMMON_KEYS = new Set([
   'height',
   'weight',
   'bodyType',
+  'hairstyle',
+  'facialFeatures',
+  'posture',
   'hobbies',
+  'skills',
+  'specialAbilities',
+  'weaknesses',
 ]);
 
 export function resolveCharacterProfile(
@@ -64,7 +70,13 @@ export function resolveCharacterProfile(
     height: pickField('height', char.common.height ?? ''),
     weight: pickField('weight', char.common.weight ?? ''),
     bodyType: pickField('bodyType', char.common.bodyType ?? ''),
+    hairstyle: pickField('hairstyle', char.common.hairstyle ?? ''),
+    facialFeatures: pickField('facialFeatures', char.common.facialFeatures ?? ''),
+    posture: pickField('posture', char.common.posture ?? ''),
     hobbies: pickField('hobbies', char.common.hobbies ?? ''),
+    skills: pickField('skills', char.common.skills ?? ''),
+    specialAbilities: pickField('specialAbilities', char.common.specialAbilities ?? ''),
+    weaknesses: pickField('weaknesses', char.common.weaknesses ?? ''),
     firstPerson: pickField('firstPerson', char.common.firstPerson ?? ''),
     ageDisplay: pickField('ageDisplay', char.common.ageDisplay ?? ''),
     relationship: pickField('relationship', char.common.relationship ?? ''),
@@ -82,6 +94,7 @@ export function resolveCharacterProfile(
     key: cf.key,
     label: cf.label,
     value: pickField(cf.key, cf.value ?? ''),
+    category: cf.category,
   }));
 
   const customFields = dualDefs
@@ -99,12 +112,22 @@ export function resolveCharacterProfile(
       };
     });
 
+  const relations = (char.relations ?? []).map((rel) => ({
+    targetCharacterId: rel.targetCharacterId,
+    callPartner: rel.callPartner ?? '',
+    relationship: rel.relationship ?? '',
+  }));
+
   const allFields: Record<string, string> = { ...baseFields };
   for (const ef of extraCommonFields) {
     allFields[ef.key] = ef.value;
   }
   for (const cf of customFields) {
     allFields[cf.key] = cf.value;
+  }
+  for (const rel of relations) {
+    allFields[`callPartner.${rel.targetCharacterId}`] = rel.callPartner;
+    allFields[`relationship.${rel.targetCharacterId}`] = rel.relationship;
   }
 
   return {
@@ -116,7 +139,13 @@ export function resolveCharacterProfile(
     height: baseFields.height,
     weight: baseFields.weight,
     bodyType: baseFields.bodyType,
+    hairstyle: baseFields.hairstyle,
+    facialFeatures: baseFields.facialFeatures,
+    posture: baseFields.posture,
     hobbies: baseFields.hobbies,
+    skills: baseFields.skills,
+    specialAbilities: baseFields.specialAbilities,
+    weaknesses: baseFields.weaknesses,
     firstPerson: baseFields.firstPerson,
     ageDisplay: baseFields.ageDisplay,
     relationship: baseFields.relationship,
@@ -124,6 +153,7 @@ export function resolveCharacterProfile(
     secondPerson: baseFields.secondPerson,
     speechStyle: baseFields.speechStyle,
     costume: resolvedCostume,
+    relations,
     hiddenCommonFields: Array.from(hiddenSet),
     extraCommonFields,
     customFields,
@@ -172,13 +202,16 @@ export function compileSceneText(
       .replace(/\[R18_BLOCK_END\]\r?\n?/gi, '');
   }
 
-  // 3. Resolve {{characterId.field}} variable tags
+  // 3. Resolve {{characterId.field}} and {{characterId.callPartner|relationship.targetId}} variable tags
   const charById = new Map(characters.map((c) => [c.id, c]));
-  output = output.replace(/\{\{\s*([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)\s*\}\}/g, (match, charId, field) => {
-    const char = charById.get(charId);
-    if (!char) return match;
-    return resolveCharacterField(char, field, mode);
-  });
+  output = output.replace(
+    /\{\{\s*([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)?)\s*\}\}/g,
+    (match, charId, field) => {
+      const char = charById.get(charId);
+      if (!char) return match;
+      return resolveCharacterField(char, field, mode);
+    }
+  );
 
   // 4. Collapse excessive blank lines caused by stripped blocks
   output = output.replace(/\n{3,}/g, '\n\n').trim();
@@ -324,12 +357,13 @@ export function proofreadScene(
     // Skip inactive branch lines for dialogue checks if inside opposing [IF_MODE]
     const isInactiveBranch = currentConditionalMode !== null && currentConditionalMode !== mode;
 
-    // 1. Check unresolved {{char.field}} variables
-    const varRegex = /\{\{\s*([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)\s*\}\}/g;
+    // 1. Check unresolved {{char.field}} and {{char.callPartner|relationship.targetId}} variables
+    const varRegex = /\{\{\s*([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)(?:\.([a-zA-Z0-9_-]+))?\s*\}\}/g;
     let varMatch: RegExpExecArray | null;
     while ((varMatch = varRegex.exec(line)) !== null) {
       const charId = varMatch[1];
       const field = varMatch[2];
+      const targetId = varMatch[3];
       const char = charById.get(charId);
       const validFields = new Set([
         'name',
@@ -339,7 +373,13 @@ export function proofreadScene(
         'height',
         'weight',
         'bodyType',
+        'hairstyle',
+        'facialFeatures',
+        'posture',
         'hobbies',
+        'skills',
+        'specialAbilities',
+        'weaknesses',
         'firstPerson',
         'ageDisplay',
         'relationship',
@@ -361,6 +401,34 @@ export function proofreadScene(
           message: `未登録のキャラクター変数 "${charId}" が参照されています。`,
           snippet: varMatch[0],
         });
+      } else if (targetId) {
+        if (field !== 'callPartner' && field !== 'relationship') {
+          issues.push({
+            id: `syntax-var-rel-field-${lineNum}-${varMatch.index}`,
+            line: lineNum,
+            column: varMatch.index + 1,
+            severity: 'warning',
+            category: 'syntax',
+            message: `相手キャラ指定は callPartner または relationship のみ対応しています（"${field}"）。`,
+            snippet: varMatch[0],
+          });
+        } else {
+          const hasRelation = (char.relations ?? []).some((r) => r.targetCharacterId === targetId);
+          const targetChar = charById.get(targetId);
+          if (!hasRelation) {
+            issues.push({
+              id: `syntax-var-rel-target-${lineNum}-${varMatch.index}`,
+              line: lineNum,
+              column: varMatch.index + 1,
+              severity: 'warning',
+              category: 'syntax',
+              message: targetChar
+                ? `${char.common.name} に「${targetChar.common.name}」向けの個別設定が未登録です。`
+                : `未登録の相手キャラクター "${targetId}" が参照されています。`,
+              snippet: varMatch[0],
+            });
+          }
+        }
       } else if (!validFields.has(field)) {
         issues.push({
           id: `syntax-var-field-${lineNum}-${varMatch.index}`,

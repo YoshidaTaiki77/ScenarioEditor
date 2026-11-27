@@ -6,6 +6,7 @@ interface SaveStatusIndicatorProps {
   saveStatus: SaveStatus;
   activeMode: ActiveMode;
   onSaveNow: () => void;
+  compact?: boolean;
 }
 
 function formatSavedTime(iso?: string, withSeconds = false): string {
@@ -23,6 +24,7 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
   saveStatus,
   activeMode,
   onSaveNow,
+  compact = false,
 }) => {
   const isAdult = activeMode === 'adult';
 
@@ -39,7 +41,9 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
 
   return (
     <div
-      className={`flex items-center gap-2 rounded-md border bg-white px-2 py-1 text-xs transition-colors whitespace-nowrap shrink-0 ${
+      className={`flex items-center rounded-md border bg-white text-xs transition-colors whitespace-nowrap shrink-0 ${
+        compact ? 'gap-1.5 px-1.5 py-1' : 'gap-1.5 xl:gap-2 px-2 py-1'
+      } ${
         saveStatus.state === 'error'
           ? 'border-rose-300 text-rose-800'
           : isAdult
@@ -57,39 +61,51 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
         {saveStatus.state === 'saving' ? (
           <>
             <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-600" />
-            <span className="font-medium text-slate-800">保存中...</span>
+            <span className={compact ? 'text-[11px] font-medium text-slate-800' : 'hidden lg:inline font-medium text-slate-800'}>
+              保存中...
+            </span>
           </>
         ) : saveStatus.state === 'error' ? (
           <>
             <AlertCircle className="h-3.5 w-3.5 text-rose-600" />
-            <span className="font-medium text-rose-700">保存エラー</span>
+            <span className={compact ? 'text-[11px] font-medium text-rose-700' : 'hidden lg:inline font-medium text-rose-700'}>
+              エラー
+            </span>
           </>
         ) : saveStatus.hasPendingChanges ? (
           <>
             <Clock className="h-3.5 w-3.5 text-amber-600" />
-            <span className="font-medium text-amber-800">未保存あり</span>
+            <span className={compact ? 'text-[11px] font-medium text-amber-800' : 'hidden lg:inline font-medium text-amber-800'}>
+              {compact ? '未保存' : '未保存あり'}
+            </span>
           </>
         ) : (
           <>
             <Check className="h-3.5 w-3.5 text-emerald-600" />
-            <span className="font-medium text-slate-800">保存済み</span>
+            <span className={compact ? 'text-[11px] font-medium text-slate-800' : 'hidden lg:inline font-medium text-slate-800'}>
+              保存済み
+            </span>
           </>
         )}
       </div>
 
       {/* Last successful save time (shown inline on wide screens, always in tooltip) */}
-      <span
-        className="hidden 2xl:inline text-slate-300 select-none"
-        aria-hidden="true"
-      >
-        ·
-      </span>
-      <div className="hidden 2xl:flex items-center gap-1 text-[11px] text-slate-500 whitespace-nowrap shrink-0">
-        <span>前回</span>
-        <span className="font-code font-medium text-slate-700 tabular-nums">
-          {shortSavedTime}
-        </span>
-      </div>
+      {!compact && (
+        <>
+          <span
+            className="hidden 2xl:inline text-slate-300 select-none"
+            aria-hidden="true"
+          >
+            ·
+          </span>
+          <div className="hidden 2xl:flex items-center gap-1 text-[11px] text-slate-500 whitespace-nowrap shrink-0">
+            <span>前回</span>
+            <span className="font-code font-medium text-slate-700 tabular-nums">
+              {shortSavedTime}
+            </span>
+          </div>
+        </>
+      )}
 
       {/* Manual save now trigger */}
       <button
@@ -97,14 +113,15 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
         onClick={onSaveNow}
         disabled={saveStatus.state === 'saving'}
         title={`${storageLabel} へ今すぐ保存（前回: ${fullSavedTime}）`}
-        className={`flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 ${
+        className={`flex items-center gap-1 rounded border px-1.5 xl:px-2 py-0.5 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 ${
           isAdult
             ? 'border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100'
             : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
         }`}
       >
         <Save className="h-3 w-3" />
-        <span>今すぐ保存</span>
+        <span className={compact ? 'hidden sm:inline' : 'hidden xl:inline'}>今すぐ保存</span>
+        <span className={compact ? 'inline sm:hidden' : 'inline xl:hidden'}>保存</span>
       </button>
     </div>
   );

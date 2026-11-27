@@ -163,11 +163,14 @@ export const PlotFlowChart: React.FC<PlotFlowChartProps> = ({
 }) => {
   const isAdult = activeMode === 'adult';
 
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const stagingRef = useRef<HTMLDivElement | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const fittedPlotIdRef = useRef<string | null>(null);
+  const prevNarrowChartRef = useRef<boolean | null>(null);
 
+  const [isNarrowChart, setIsNarrowChart] = useState<boolean>(false);
   const [zoom, setZoom] = useState<number>(0.9);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 32, y: 32 });
   const [snapEnabled, setSnapEnabled] = useState<boolean>(true);
@@ -192,6 +195,39 @@ export const PlotFlowChart: React.FC<PlotFlowChartProps> = ({
     const t = window.setTimeout(() => setToastNotice(null), 2400);
     return () => window.clearTimeout(t);
   }, [toastNotice]);
+
+  // Observe chart container width: automatically overlay side panels below 920px so canvas never gets squeezed
+  useEffect(() => {
+    const el = workspaceRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const updateWidth = (width: number) => {
+      if (width <= 0) return;
+      const narrow = width < 920;
+      setIsNarrowChart(narrow);
+      const prev = prevNarrowChartRef.current;
+      if (prev === null) {
+        if (narrow) setStagingOpen(false);
+      } else if (!prev && narrow) {
+        setStagingOpen(false);
+      }
+      prevNarrowChartRef.current = narrow;
+    };
+    updateWidth(el.getBoundingClientRect().width);
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        updateWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Keep staging tray and quick-edit drawer mutually exclusive when overlaid on narrow charts
+  useEffect(() => {
+    if (isNarrowChart && selectedCardId) {
+      setStagingOpen(false);
+    }
+  }, [isNarrowChart, selectedCardId]);
 
   // Reset ephemeral selection when switching plots
   useEffect(() => {
@@ -868,7 +904,16 @@ export const PlotFlowChart: React.FC<PlotFlowChartProps> = ({
           {/* Staging Tray Toggle */}
           <button
             type="button"
-            onClick={() => setStagingOpen((v) => !v)}
+            onClick={() =>
+              setStagingOpen((prev) => {
+                const next = !prev;
+                if (next && isNarrowChart) {
+                  setSelectedCardId(null);
+                  setConfirmDeleteCardId(null);
+                }
+                return next;
+              })
+            }
             className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors whitespace-nowrap ${
               stagingOpen
                 ? 'border-slate-300 bg-slate-100 text-slate-900'
@@ -974,7 +1019,7 @@ export const PlotFlowChart: React.FC<PlotFlowChartProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="hidden xl:inline text-[11px] text-slate-400">
+          <span className="hidden @5xl:inline text-[11px] text-slate-400">
             ドラッグ移動 · 右端●から矢印結線 · 背景ダブルクリックで追加
           </span>
           <button
@@ -989,12 +1034,16 @@ export const PlotFlowChart: React.FC<PlotFlowChartProps> = ({
       </div>
 
       {/* Main 3-Region Workspace: Staging Tray | 2D Free Canvas | Quick Edit Drawer */}
-      <div className="relative flex flex-1 min-h-0 overflow-hidden">
+      <div ref={workspaceRef} className="relative flex flex-1 min-h-0 overflow-hidden">
         {/* Left Collapsible Staging Tray (アイデア置き場) */}
         {stagingOpen && (
           <aside
             ref={stagingRef}
-            className={`flex w-60 shrink-0 flex-col border-r transition-colors ${
+            className={`flex flex-col border-r transition-colors ${
+              isNarrowChart
+                ? 'absolute inset-y-0 left-0 z-30 w-[min(82%,16rem)] shadow-xl'
+                : 'w-60 shrink-0'
+            } ${
               draggingNode?.overStaging
                 ? 'border-sky-400 bg-sky-50/70'
                 : 'border-slate-200 bg-white'
@@ -1148,7 +1197,7 @@ export const PlotFlowChart: React.FC<PlotFlowChartProps> = ({
             backgroundSize: `${gridDotSpacing}px ${gridDotSpacing}px`,
             backgroundPosition: `${pan.x % gridDotSpacing}px ${pan.y % gridDotSpacing}px`,
           }}
-          className={`relative flex-1 min-w-0 min-h-0 overflow-hidden bg-slate-50/90 select-none ${
+          className={`relative flex-1 min-w-0 min-h-0 overflow-hidden bg-slate-50/90 select-none touch-none ${
             panning ? 'cursor-grabbing' : 'cursor-grab'
           } ${draggingStaging?.overCanvas ? 'ring-2 ring-inset ring-sky-400/70' : ''}`}
         >
@@ -1577,7 +1626,13 @@ export const PlotFlowChart: React.FC<PlotFlowChartProps> = ({
 
         {/* Right Slide-In Quick Edit Drawer */}
         {selectedCard && (
-          <aside className="flex w-80 shrink-0 flex-col border-l border-slate-200 bg-white overflow-hidden">
+          <aside
+            className={`flex flex-col border-l border-slate-200 bg-white overflow-hidden ${
+              isNarrowChart
+                ? 'absolute inset-y-0 right-0 z-30 w-[min(90%,20rem)] shadow-xl'
+                : 'w-80 shrink-0'
+            }`}
+          >
             {/* Drawer Header */}
             <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2.5">
               <div className="flex items-center gap-1.5 min-w-0">

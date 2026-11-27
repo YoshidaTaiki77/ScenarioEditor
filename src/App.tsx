@@ -1,21 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Info, X } from 'lucide-react';
-import type {
-  ActiveMode,
-  BulkFieldAddResult,
-  BulkFieldAddScope,
-  CharacterCommon,
-  CharacterData,
-  CustomCommonFieldTemplate,
-  DualProfileFieldDef,
-  HistorySnapshot,
-  PlotCard,
-  PlotData,
-  SaveStatus,
-  ScenarioWorkspace,
-  SceneData,
-  SelectedItem,
-  VisibilityType,
+import {
+  STANDARD_CHARACTER_CATEGORIES,
+  type ActiveMode,
+  type BulkFieldAddResult,
+  type BulkFieldAddScope,
+  type CharacterCommon,
+  type CharacterData,
+  type CustomCommonFieldTemplate,
+  type DualProfileFieldDef,
+  type HistorySnapshot,
+  type PlotCard,
+  type PlotData,
+  type SaveStatus,
+  type ScenarioWorkspace,
+  type SceneData,
+  type SelectedItem,
+  type VisibilityType,
 } from './types/scenario';
 import { INITIAL_WORKSPACE, createWorkspaceFromTemplate } from './data/initialProject';
 import { exportScenarioBundle } from './utils/scenarioEngine';
@@ -56,6 +57,15 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 
 const DEBOUNCE_SAVE_MS = 2500;
 
+type ViewportTier = 'wide' | 'medium' | 'narrow';
+
+function getViewportTier(): ViewportTier {
+  if (typeof window === 'undefined') return 'wide';
+  if (window.innerWidth >= 1280) return 'wide';
+  if (window.innerWidth >= 1024) return 'medium';
+  return 'narrow';
+}
+
 function getCharacterCommonValueByKey(char: CharacterData, key: string): string {
   if (key === 'shortName') return char.shortName ?? '';
   if (key === 'costume') return char.common.costume ?? char.common.costumeId ?? '';
@@ -78,6 +88,10 @@ export default function App() {
   const [isNewPlotModalOpen, setIsNewPlotModalOpen] = useState(false);
   const [verticalWriting, setVerticalWriting] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
+
+  const [viewportTier, setViewportTier] = useState<ViewportTier>(getViewportTier);
+  const [leftPaneOpen, setLeftPaneOpen] = useState<boolean>(() => getViewportTier() !== 'narrow');
+  const [rightPaneOpen, setRightPaneOpen] = useState<boolean>(() => getViewportTier() === 'wide');
 
   const [cursorIndex, setCursorIndex] = useState(0);
 
@@ -362,19 +376,97 @@ export default function App() {
     });
   }, []);
 
-  // Global keyboard shortcuts: Ctrl/Cmd + Shift + M for mode switch, Esc to exit Focus Mode
+  // Adaptive 3-stage viewport tier sync (wide >= 1280, medium 1024-1279, narrow < 1024)
+  useEffect(() => {
+    const handleResize = () => {
+      const next = getViewportTier();
+      setViewportTier((prev) => {
+        if (prev === next) return prev;
+        if (next === 'wide') {
+          setLeftPaneOpen(true);
+          setRightPaneOpen(true);
+        } else if (next === 'medium') {
+          setLeftPaneOpen(true);
+          setRightPaneOpen(false);
+        } else {
+          setLeftPaneOpen(false);
+          setRightPaneOpen(false);
+        }
+        return next;
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isLeftOverlay = viewportTier === 'narrow';
+  const isRightOverlay = viewportTier !== 'wide';
+  const showLeftPane = !focusMode && leftPaneOpen;
+  const showRightPane = !focusMode && rightPaneOpen;
+
+  const handleToggleLeftPane = useCallback(() => {
+    if (focusMode) {
+      setFocusMode(false);
+      setLeftPaneOpen(true);
+      if (isLeftOverlay) {
+        setRightPaneOpen(false);
+      }
+      return;
+    }
+    setLeftPaneOpen((prev) => {
+      const next = !prev;
+      if (next && isLeftOverlay) {
+        setRightPaneOpen(false);
+      }
+      return next;
+    });
+  }, [focusMode, isLeftOverlay]);
+
+  const handleToggleRightPane = useCallback(() => {
+    if (focusMode) {
+      setFocusMode(false);
+      setRightPaneOpen(true);
+      if (isLeftOverlay) {
+        setLeftPaneOpen(false);
+      }
+      return;
+    }
+    setRightPaneOpen((prev) => {
+      const next = !prev;
+      if (next && isLeftOverlay) {
+        setLeftPaneOpen(false);
+      }
+      return next;
+    });
+  }, [focusMode, isLeftOverlay]);
+
+  // Global keyboard shortcuts: Ctrl/Cmd + Shift + M for mode switch, Esc to close overlays or exit Focus Mode
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'm') {
         e.preventDefault();
         handleToggleMode(activeMode === 'general' ? 'adult' : 'general');
-      } else if (e.key === 'Escape' && focusMode) {
-        setFocusMode(false);
+      } else if (e.key === 'Escape') {
+        if (isLeftOverlay && showLeftPane) {
+          setLeftPaneOpen(false);
+        } else if (isRightOverlay && showRightPane) {
+          setRightPaneOpen(false);
+        } else if (focusMode) {
+          setFocusMode(false);
+        }
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeMode, focusMode, handleToggleMode]);
+  }, [
+    activeMode,
+    focusMode,
+    handleToggleMode,
+    isLeftOverlay,
+    isRightOverlay,
+    showLeftPane,
+    showRightPane,
+  ]);
 
   const activeScene = useMemo(() => {
     if (selectedItem.type !== 'scene') return null;
@@ -647,6 +739,12 @@ export default function App() {
           return c.id === sourceCharacterId;
         };
 
+        const cleanCategory =
+          typeof field.category === 'string' && field.category.trim()
+            ? field.category.trim()
+            : undefined;
+        const standardCatSet = new Set<string>(STANDARD_CHARACTER_CATEGORIES);
+
         const nextCharacters = prev.characters.map((c) => {
           if (!matches(c)) return c;
           const existing = c.customCommonFields ?? [];
@@ -660,6 +758,7 @@ export default function App() {
                 label: field.label,
                 value: '',
                 multiline: Boolean(field.multiline),
+                category: cleanCategory,
               },
             ],
           };
@@ -674,9 +773,18 @@ export default function App() {
                   key: field.key,
                   label: field.label,
                   multiline: Boolean(field.multiline),
+                  category: cleanCategory,
                 },
               ]
             : prevDefaults;
+
+        const prevCustomCategories = prev.project.customCharacterCategories ?? [];
+        const nextCustomCategories =
+          cleanCategory &&
+          !standardCatSet.has(cleanCategory) &&
+          !prevCustomCategories.includes(cleanCategory)
+            ? [...prevCustomCategories, cleanCategory]
+            : prevCustomCategories;
 
         return {
           ...prev,
@@ -684,6 +792,7 @@ export default function App() {
           project: {
             ...prev.project,
             defaultCustomCommonFields: nextDefaults,
+            customCharacterCategories: nextCustomCategories,
           },
         };
       });
@@ -1511,13 +1620,20 @@ export default function App() {
           height: '',
           weight: '',
           bodyType: '',
+          hairstyle: '',
+          facialFeatures: '',
+          posture: '',
           hobbies: '',
+          skills: '',
+          specialAbilities: '',
+          weaknesses: '',
         },
         customCommonFields: defaultCommonTemplates.map((tpl) => ({
           key: tpl.key,
           label: tpl.label,
           value: '',
           multiline: Boolean(tpl.multiline),
+          category: tpl.category,
         })),
         dualFields: defaultDualTemplates.map((tpl) => ({
           key: tpl.key,
@@ -2019,8 +2135,62 @@ export default function App() {
     triggerDownload(filename, content);
   };
 
+  const leftTreeElement = (
+    <LeftTreePane
+      activeMode={activeMode}
+      characters={workspace.characters}
+      characterFolders={workspace.project.characterFolders ?? []}
+      plots={workspace.plots}
+      scenes={workspace.scenes}
+      sceneFolders={workspace.project.sceneFolders ?? []}
+      selectedItem={selectedItem}
+      onSelect={(item) => {
+        setSelectedItem(item);
+        if (isLeftOverlay) {
+          setLeftPaneOpen(false);
+        }
+      }}
+      onAddScene={handleAddScene}
+      onDeleteScene={handleDeleteScene}
+      onCreateSceneFolder={handleCreateSceneFolder}
+      onRenameSceneFolder={handleRenameSceneFolder}
+      onDeleteSceneFolder={handleDeleteSceneFolder}
+      onMoveSceneToFolder={handleMoveSceneToFolder}
+      onReorderScene={handleReorderScene}
+      onReorderSceneFolder={handleReorderSceneFolder}
+      onAddCharacter={handleAddCharacter}
+      onCreateCharacterFolder={handleCreateCharacterFolder}
+      onRenameCharacterFolder={handleRenameCharacterFolder}
+      onDeleteCharacterFolder={handleDeleteCharacterFolder}
+      onMoveCharacterToFolder={handleMoveCharacterToFolder}
+      onReorderCharacter={handleReorderCharacter}
+      onReorderCharacterFolder={handleReorderCharacterFolder}
+      onAddPlot={() => setIsNewPlotModalOpen(true)}
+      onDeletePlot={handleDeletePlot}
+      onReorderPlot={handleReorderPlot}
+      isOverlay={isLeftOverlay}
+      onClose={isLeftOverlay ? () => setLeftPaneOpen(false) : undefined}
+    />
+  );
+
+  const rightInspectorElement = (
+    <RightInspectorPane
+      activeMode={activeMode}
+      selectedItemType={selectedItem.type}
+      scene={activeScene}
+      characters={workspace.characters}
+      cursorIndex={cursorIndex}
+      onJumpToLine={(line) => sceneEditorRef.current?.jumpToLine(line)}
+      onInsertSnippet={(snippet, caretBefore) =>
+        sceneEditorRef.current?.insertAtCursor(snippet, caretBefore)
+      }
+      isOverlay={isRightOverlay}
+      onClose={isRightOverlay ? () => setRightPaneOpen(false) : undefined}
+    />
+  );
+
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-50 text-slate-900">
+    <div className="flex h-dvh w-screen flex-col overflow-hidden bg-slate-50 text-slate-900">
       <HeaderBar
         projectTitle={workspace.project.title}
         onChangeProjectTitle={(title) =>
@@ -2047,6 +2217,10 @@ export default function App() {
           setIsHistoryModalOpen(true);
           void refreshHistory();
         }}
+        leftPaneOpen={showLeftPane}
+        rightPaneOpen={showRightPane}
+        onToggleLeftPane={handleToggleLeftPane}
+        onToggleRightPane={handleToggleRightPane}
       />
 
       {pendingReconnectDir && saveStatus.storageMode !== 'filesystem' && !noticeBanner && (
@@ -2093,41 +2267,24 @@ export default function App() {
       )}
 
       {/* Main 3-Pane Workspace */}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {/* Left Pane: Project Tree (hidden in Focus Mode) */}
-        {!focusMode && (
-          <LeftTreePane
-            activeMode={activeMode}
-            characters={workspace.characters}
-            characterFolders={workspace.project.characterFolders ?? []}
-            plots={workspace.plots}
-            scenes={workspace.scenes}
-            sceneFolders={workspace.project.sceneFolders ?? []}
-            selectedItem={selectedItem}
-            onSelect={setSelectedItem}
-            onAddScene={handleAddScene}
-            onDeleteScene={handleDeleteScene}
-            onCreateSceneFolder={handleCreateSceneFolder}
-            onRenameSceneFolder={handleRenameSceneFolder}
-            onDeleteSceneFolder={handleDeleteSceneFolder}
-            onMoveSceneToFolder={handleMoveSceneToFolder}
-            onReorderScene={handleReorderScene}
-            onReorderSceneFolder={handleReorderSceneFolder}
-            onAddCharacter={handleAddCharacter}
-            onCreateCharacterFolder={handleCreateCharacterFolder}
-            onRenameCharacterFolder={handleRenameCharacterFolder}
-            onDeleteCharacterFolder={handleDeleteCharacterFolder}
-            onMoveCharacterToFolder={handleMoveCharacterToFolder}
-            onReorderCharacter={handleReorderCharacter}
-            onReorderCharacterFolder={handleReorderCharacterFolder}
-            onAddPlot={() => setIsNewPlotModalOpen(true)}
-            onDeletePlot={handleDeletePlot}
-            onReorderPlot={handleReorderPlot}
-          />
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        {/* Left Pane: Docked Inline (wide / medium) */}
+        {showLeftPane && !isLeftOverlay && leftTreeElement}
+
+        {/* Left Pane: Slide-over Overlay Drawer (narrow < 1024px) */}
+        {showLeftPane && isLeftOverlay && (
+          <div className="fixed inset-0 z-40 flex">
+            <div
+              className="fixed inset-0 bg-slate-900/30 backdrop-blur-[1px]"
+              onClick={() => setLeftPaneOpen(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 flex h-full">{leftTreeElement}</div>
+          </div>
         )}
 
-        {/* Center Pane: Scene Editor / Character Editor / Plot Board */}
-        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {/* Center Pane: Scene Editor / Character Editor / Plot Board (@container for pane-aware responsiveness) */}
+        <main className="@container flex min-w-0 flex-1 flex-col overflow-hidden">
           {selectedItem.type === 'scene' && activeScene && (
             <SceneEditorPane
               ref={sceneEditorRef}
@@ -2164,8 +2321,52 @@ export default function App() {
               characterFolders={workspace.project.characterFolders ?? []}
               defaultCustomCommonFields={workspace.project.defaultCustomCommonFields ?? []}
               defaultDualFields={workspace.project.defaultDualFields ?? []}
+              characterFieldMultiline={workspace.project.characterFieldMultiline ?? {}}
+              customCharacterCategories={workspace.project.customCharacterCategories ?? []}
               activeMode={activeMode}
               onUpdateCharacter={handleUpdateCharacter}
+              onRegisterCharacterCategory={(rawCategory) => {
+                const clean = rawCategory.trim();
+                if (!clean) return;
+                if ((STANDARD_CHARACTER_CATEGORIES as readonly string[]).includes(clean)) return;
+                setWorkspace((prev) => {
+                  const prevCats = prev.project.customCharacterCategories ?? [];
+                  if (prevCats.includes(clean)) return prev;
+                  return {
+                    ...prev,
+                    project: {
+                      ...prev.project,
+                      customCharacterCategories: [...prevCats, clean],
+                    },
+                  };
+                });
+              }}
+              onChangeCharacterFieldMultiline={(key, multiline, defaultMultiline) => {
+                setWorkspace((prev) => {
+                  const nextMap = { ...(prev.project.characterFieldMultiline ?? {}) };
+                  if (multiline === defaultMultiline) {
+                    delete nextMap[key];
+                  } else {
+                    nextMap[key] = multiline;
+                  }
+                  return {
+                    ...prev,
+                    project: {
+                      ...prev.project,
+                      characterFieldMultiline: nextMap,
+                    },
+                  };
+                });
+              }}
+              onResetCharacterFieldMultiline={() => {
+                setWorkspace((prev) => ({
+                  ...prev,
+                  project: {
+                    ...prev.project,
+                    characterFieldMultiline: {},
+                  },
+                }));
+              }}
               onBulkAddCommonField={handleBulkAddCommonField}
               onBulkAddDualField={handleBulkAddDualField}
               onRemoveDefaultCommonField={handleRemoveDefaultCommonField}
@@ -2223,19 +2424,19 @@ export default function App() {
           )}
         </main>
 
-        {/* Right Pane: 3-Tab Inspector (hidden in Focus Mode) */}
-        {!focusMode && (
-          <RightInspectorPane
-            activeMode={activeMode}
-            selectedItemType={selectedItem.type}
-            scene={activeScene}
-            characters={workspace.characters}
-            cursorIndex={cursorIndex}
-            onJumpToLine={(line) => sceneEditorRef.current?.jumpToLine(line)}
-            onInsertSnippet={(snippet, caretBefore) =>
-              sceneEditorRef.current?.insertAtCursor(snippet, caretBefore)
-            }
-          />
+        {/* Right Pane: Docked Inline (wide >= 1280px) */}
+        {showRightPane && !isRightOverlay && rightInspectorElement}
+
+        {/* Right Pane: Slide-over Overlay Drawer (medium / narrow < 1280px) */}
+        {showRightPane && isRightOverlay && (
+          <div className="fixed inset-0 z-40 flex justify-end">
+            <div
+              className="fixed inset-0 bg-slate-900/30 backdrop-blur-[1px]"
+              onClick={() => setRightPaneOpen(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 flex h-full">{rightInspectorElement}</div>
+          </div>
         )}
       </div>
 
