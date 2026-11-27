@@ -2,12 +2,14 @@ import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   BookMarked,
+  BookOpen,
   Check,
   CheckCircle2,
   Copy,
   FileWarning,
   HelpCircle,
   Lock,
+  User,
   X,
 } from 'lucide-react';
 import {
@@ -17,6 +19,7 @@ import {
   type ProofreadIssue,
   type SceneData,
   type SelectedItem,
+  type WorldSettingData,
 } from '../types/scenario';
 import {
   detectSpeakerOnLine,
@@ -32,6 +35,8 @@ interface RightInspectorPaneProps {
   selectedItemType: SelectedItem['type'];
   scene: SceneData | null;
   characters: CharacterData[];
+  worldSettings: WorldSettingData[];
+  worldFolders: string[];
   cursorIndex: number;
   onJumpToLine: (line: number) => void;
   onInsertSnippet: (snippet: string, placeCaretBefore?: string) => void;
@@ -44,6 +49,8 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
   selectedItemType,
   scene,
   characters,
+  worldSettings,
+  worldFolders,
   cursorIndex,
   onJumpToLine,
   onInsertSnippet,
@@ -51,7 +58,11 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
   onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<InspectorTab>('reference');
+  const [referenceMode, setReferenceMode] = useState<'character' | 'world'>('character');
   const [manualCharId, setManualCharId] = useState<string>('');
+  const [selectedWorldFolderFilter, setSelectedWorldFolderFilter] = useState<string>('__all__');
+  const [worldSearchQuery, setWorldSearchQuery] = useState<string>('');
+  const [selectedWorldId, setSelectedWorldId] = useState<string>('');
   const [copiedVarKey, setCopiedVarKey] = useState<string | null>(null);
 
   const isAdult = activeMode === 'adult';
@@ -75,11 +86,87 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
     return resolveCharacterProfile(activeCharacter, activeMode);
   }, [activeCharacter, activeMode]);
 
+  const filteredWorldSettings = useMemo(() => {
+    const q = worldSearchQuery.trim().toLowerCase();
+    return worldSettings.filter((w) => {
+      if (selectedWorldFolderFilter === '__root__' && w.folder) return false;
+      if (
+        selectedWorldFolderFilter !== '__all__' &&
+        selectedWorldFolderFilter !== '__root__' &&
+        w.folder !== selectedWorldFolderFilter
+      ) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        w.name.toLowerCase().includes(q) ||
+        (w.ruby ?? '').toLowerCase().includes(q) ||
+        w.summary.toLowerCase().includes(q) ||
+        w.details.toLowerCase().includes(q) ||
+        w.id.toLowerCase().includes(q)
+      );
+    });
+  }, [worldSettings, selectedWorldFolderFilter, worldSearchQuery]);
+
+  const activeWorldItem = useMemo(() => {
+    if (filteredWorldSettings.length === 0) return null;
+    if (selectedWorldId) {
+      const found = filteredWorldSettings.find((w) => w.id === selectedWorldId);
+      if (found) return found;
+    }
+    return filteredWorldSettings[0];
+  }, [filteredWorldSettings, selectedWorldId]);
+
+  const worldVariableItems = useMemo(() => {
+    if (!activeWorldItem) return [];
+    const items: Array<{ key: string; label: string; notation: string; value: string }> = [
+      {
+        key: `world.${activeWorldItem.id}.name`,
+        label: '名称',
+        notation: `{{world.${activeWorldItem.id}.name}}`,
+        value: activeWorldItem.name,
+      },
+    ];
+    if (activeWorldItem.ruby) {
+      items.push({
+        key: `world.${activeWorldItem.id}.ruby`,
+        label: '読み / 別名',
+        notation: `{{world.${activeWorldItem.id}.ruby}}`,
+        value: activeWorldItem.ruby,
+      });
+    }
+    if (activeWorldItem.summary) {
+      items.push({
+        key: `world.${activeWorldItem.id}.summary`,
+        label: '概要',
+        notation: `{{world.${activeWorldItem.id}.summary}}`,
+        value: activeWorldItem.summary,
+      });
+    }
+    for (const cf of activeWorldItem.customFields ?? []) {
+      items.push({
+        key: `world.${activeWorldItem.id}.${cf.key}`,
+        label: cf.label,
+        notation: `{{world.${activeWorldItem.id}.${cf.key}}}`,
+        value: cf.value,
+      });
+    }
+    if (isAdult && activeWorldItem.enableAdultNote && activeWorldItem.adultNote) {
+      items.push({
+        key: `world.${activeWorldItem.id}.adultNote`,
+        label: 'R18補足',
+        notation: `{{world.${activeWorldItem.id}.adultNote}}`,
+        value: activeWorldItem.adultNote,
+      });
+    }
+    return items;
+  }, [activeWorldItem, isAdult]);
+
   // Real-time zero-AI proofreading
   const issues: ProofreadIssue[] = useMemo(() => {
     if (!scene) return [];
-    return proofreadScene(scene.body, characters, activeMode);
-  }, [scene, characters, activeMode]);
+    return proofreadScene(scene.body, characters, activeMode, worldSettings);
+  }, [scene, characters, activeMode, worldSettings]);
 
   const quickTemplates = useMemo(() => {
     const cName = resolvedChar?.shortName ?? '栞';
@@ -342,6 +429,281 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
         {/* TAB 1: Reference */}
         {activeTab === 'reference' && (
           <div className="space-y-4">
+            {/* Reference Sub-switcher: キャラクター / 世界観 */}
+            <div
+              role="tablist"
+              aria-label="参照対象を切り替え"
+              className="grid grid-cols-2 rounded-md border border-slate-200 bg-slate-100/80 p-0.5 text-[11px]"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={referenceMode === 'character'}
+                onClick={() => setReferenceMode('character')}
+                className={`flex items-center justify-center gap-1 rounded px-2 py-1 font-medium transition-colors ${
+                  referenceMode === 'character'
+                    ? isAdult
+                      ? 'bg-white text-rose-800 shadow-2xs'
+                      : 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <User className="h-3 w-3 shrink-0" />
+                <span>キャラクター</span>
+                <span className="font-code text-[10px] text-slate-400 tabular-nums">
+                  {characters.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={referenceMode === 'world'}
+                onClick={() => setReferenceMode('world')}
+                className={`flex items-center justify-center gap-1 rounded px-2 py-1 font-medium transition-colors ${
+                  referenceMode === 'world'
+                    ? isAdult
+                      ? 'bg-white text-rose-800 shadow-2xs'
+                      : 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <BookOpen className="h-3 w-3 shrink-0" />
+                <span>世界観</span>
+                <span className="font-code text-[10px] text-slate-400 tabular-nums">
+                  {worldSettings.length}
+                </span>
+              </button>
+            </div>
+
+            {referenceMode === 'world' ? (
+              <div className="space-y-3">
+                {/* Filter & Search */}
+                <div className="rounded-lg border border-slate-200 bg-white p-2.5 space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={selectedWorldFolderFilter}
+                      onChange={(e) => setSelectedWorldFolderFilter(e.target.value)}
+                      aria-label="世界観フォルダで絞り込み"
+                      className="min-w-0 flex-1 rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-700 focus:border-slate-400 focus:outline-none"
+                    >
+                      <option value="__all__">すべてのフォルダ</option>
+                      {worldFolders.map((folder) => (
+                        <option key={folder} value={folder}>
+                          {folder}
+                        </option>
+                      ))}
+                      <option value="__root__">ルート（未分類）</option>
+                    </select>
+                  </div>
+                  <input
+                    type="text"
+                    value={worldSearchQuery}
+                    onChange={(e) => setWorldSearchQuery(e.target.value)}
+                    placeholder="名称・概要・本文で絞り込み..."
+                    className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-800 focus:border-slate-400 focus:outline-none"
+                  />
+
+                  {filteredWorldSettings.length > 0 && (
+                    <div className="max-h-36 overflow-y-auto space-y-0.5 border-t border-slate-100 pt-1.5">
+                      {filteredWorldSettings.map((item) => {
+                        const isSelected = activeWorldItem?.id === item.id;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => setSelectedWorldId(item.id)}
+                            className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-[11px] transition-colors ${
+                              isSelected
+                                ? isAdult
+                                  ? 'bg-rose-100/80 font-semibold text-rose-900'
+                                  : 'bg-slate-200/80 font-semibold text-slate-900'
+                                : 'text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            <span className="truncate">{item.name || item.id}</span>
+                            {item.folder && (
+                              <span className="shrink-0 text-[10px] font-normal text-slate-400">
+                                {item.folder}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Selected World Item Details */}
+                {activeWorldItem ? (
+                  <>
+                    <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2.5 text-xs">
+                      <div className="border-b border-slate-100 pb-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-sm font-semibold text-slate-900">
+                            {activeWorldItem.name}
+                          </div>
+                          {activeWorldItem.folder && (
+                            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 shrink-0">
+                              {activeWorldItem.folder}
+                            </span>
+                          )}
+                        </div>
+                        {activeWorldItem.ruby && (
+                          <div className="text-[11px] text-slate-400">{activeWorldItem.ruby}</div>
+                        )}
+                      </div>
+
+                      {activeWorldItem.summary && (
+                        <div>
+                          <div className="text-[11px] font-medium text-slate-500">概要</div>
+                          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-800">
+                            {activeWorldItem.summary}
+                          </p>
+                        </div>
+                      )}
+
+                      {activeWorldItem.details && (
+                        <div>
+                          <div className="text-[11px] font-medium text-slate-500">詳細設定</div>
+                          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
+                            {activeWorldItem.details}
+                          </p>
+                        </div>
+                      )}
+
+                      {(activeWorldItem.customFields ?? []).length > 0 && (
+                        <dl className="space-y-1.5 border-t border-slate-100 pt-2">
+                          {(activeWorldItem.customFields ?? []).map((cf) => {
+                            const hasNewline = cf.value.includes('\n');
+                            return (
+                              <div
+                                key={cf.key}
+                                className={`rounded bg-slate-50 px-2 py-1 ${
+                                  hasNewline
+                                    ? 'space-y-0.5'
+                                    : 'flex items-center justify-between gap-2'
+                                }`}
+                              >
+                                <dt className="text-slate-500 shrink-0">{cf.label}</dt>
+                                <dd
+                                  className={`font-medium text-slate-900 ${
+                                    hasNewline
+                                      ? 'whitespace-pre-wrap break-words leading-snug'
+                                      : 'truncate'
+                                  }`}
+                                >
+                                  {cf.value || '—'}
+                                </dd>
+                              </div>
+                            );
+                          })}
+                        </dl>
+                      )}
+
+                      {(activeWorldItem.relatedCharacterIds ?? []).length > 0 && (
+                        <div className="border-t border-slate-100 pt-2">
+                          <div className="text-[11px] font-medium text-slate-500">
+                            関連キャラクター
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {(activeWorldItem.relatedCharacterIds ?? []).map((cid) => {
+                              const char = characters.find((c) => c.id === cid);
+                              return (
+                                <span
+                                  key={cid}
+                                  className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] text-slate-700"
+                                >
+                                  {char?.common.name ?? cid}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {isAdult && activeWorldItem.enableAdultNote && activeWorldItem.adultNote && (
+                        <div className="rounded-md border border-rose-200/80 bg-rose-50/50 p-2 space-y-0.5">
+                          <div className="text-[11px] font-medium text-rose-800">
+                            R18モード補足・裏設定
+                          </div>
+                          <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-rose-950">
+                            {activeWorldItem.adultNote}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* World Variables Quick Insert */}
+                    {worldVariableItems.length > 0 && (
+                      <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
+                        <div className="flex items-center justify-between text-[10px] text-slate-400">
+                          <span className="font-medium text-slate-600">
+                            世界観変数記法（{activeWorldItem.name}）
+                          </span>
+                          <span>挿入 / コピー</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {worldVariableItems.map((item) => (
+                            <div key={item.key} className="flex items-stretch gap-1">
+                              <button
+                                type="button"
+                                disabled={!scene}
+                                onClick={() => onInsertSnippet(item.notation)}
+                                title={
+                                  scene
+                                    ? `${item.notation} を本文に挿入`
+                                    : 'シーン編集中にクリックで挿入できます'
+                                }
+                                className={`min-w-0 flex-1 rounded border px-2.5 py-1.5 text-left transition-colors disabled:opacity-55 ${
+                                  isAdult
+                                    ? 'border-rose-100 bg-rose-50/40 hover:bg-rose-100/60'
+                                    : 'border-slate-200 bg-slate-50/60 hover:bg-slate-100'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-1.5">
+                                  <span className="text-[11px] font-medium text-slate-600 truncate">
+                                    {item.label}
+                                  </span>
+                                  <span
+                                    className={`max-w-[55%] truncate text-[11px] font-semibold ${
+                                      isAdult ? 'text-rose-700' : 'text-slate-900'
+                                    }`}
+                                  >
+                                    → {item.value || '（未設定）'}
+                                  </span>
+                                </div>
+                                <div className="mt-0.5 truncate font-code text-[10px] text-slate-500">
+                                  {item.notation}
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => copyVariableNotation(item.key, item.notation)}
+                                title={`${item.notation} をコピー`}
+                                className="flex shrink-0 items-center justify-center rounded border border-slate-200 bg-white px-2 text-slate-400 hover:bg-slate-50 hover:text-slate-700 transition-colors"
+                              >
+                                {copiedVarKey === item.key ? (
+                                  <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                ) : (
+                                  <Copy className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="rounded-lg border border-slate-200 bg-white p-4 text-center text-xs text-slate-400">
+                    {worldSettings.length === 0
+                      ? '世界観設定がまだ登録されていません'
+                      : '条件に一致する世界観設定がありません'}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
             <div className="rounded-lg border border-slate-200 bg-white p-3">
               <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100">
                 <span className="text-[11px] font-medium text-slate-500">
@@ -797,6 +1159,8 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                 </div>
               )}
             </div>
+              </>
+            )}
           </div>
         )}
 

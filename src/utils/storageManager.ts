@@ -1,4 +1,5 @@
 import {
+  DEFAULT_WORLD_FOLDERS,
   STANDARD_CHARACTER_CATEGORIES,
   type CharacterData,
   type CharacterRelation,
@@ -11,6 +12,8 @@ import {
   type ScenarioWorkspace,
   type SceneData,
   type StorageMode,
+  type WorldCustomField,
+  type WorldSettingData,
 } from '../types/scenario';
 import { INITIAL_WORKSPACE } from '../data/initialProject';
 import { parseSceneMarkdown, serializeSceneMarkdown } from './scenarioEngine';
@@ -127,6 +130,26 @@ export function getSceneFilename(scene: SceneData): string {
 export function getSceneRelativePath(scene: SceneData): string {
   const folder = sanitizeSceneFolderName(scene.folder);
   const fname = getSceneFilename(scene);
+  return folder ? `${folder}/${fname}` : fname;
+}
+
+export function sanitizeWorldFolderName(folder?: string): string {
+  const cleaned = (folder ?? '')
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '');
+  if (!cleaned || cleaned === '.' || cleaned === '..') return '';
+  return cleaned;
+}
+
+export function getWorldFilename(item: WorldSettingData): string {
+  const raw = (item.filename ?? '').trim();
+  const base = raw || `${item.id}.json`;
+  return base.toLowerCase().endsWith('.json') ? base : `${base}.json`;
+}
+
+export function getWorldRelativePath(item: WorldSettingData): string {
+  const folder = sanitizeWorldFolderName(item.folder);
+  const fname = getWorldFilename(item);
   return folder ? `${folder}/${fname}` : fname;
 }
 
@@ -393,13 +416,94 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
     }
   }
 
+  // Normalize world settings & folders (default to 舞台設定 / アイテム設定 when project.worldFolders is unset)
+  const worldFolderSet = new Set<string>();
+  const orderedWorldFolders: string[] = [];
+  const rawWorldFolders = Array.isArray(raw.project?.worldFolders)
+    ? raw.project.worldFolders
+    : [...DEFAULT_WORLD_FOLDERS];
+
+  for (const f of rawWorldFolders) {
+    const clean = sanitizeWorldFolderName(f);
+    if (clean && !worldFolderSet.has(clean)) {
+      worldFolderSet.add(clean);
+      orderedWorldFolders.push(clean);
+    }
+  }
+
+  const normalizedWorldRaw: WorldSettingData[] = (raw.worldSettings ?? []).map((w) => {
+    const cleanFolder = sanitizeWorldFolderName(w.folder);
+    if (cleanFolder && !worldFolderSet.has(cleanFolder)) {
+      worldFolderSet.add(cleanFolder);
+      orderedWorldFolders.push(cleanFolder);
+    }
+
+    const normalizedCustomFields: WorldCustomField[] = Array.isArray(w.customFields)
+      ? w.customFields
+          .filter((f) => typeof f?.key === 'string' && f.key.trim())
+          .map((f) => ({
+            key: f.key.trim(),
+            label: typeof f.label === 'string' && f.label.trim() ? f.label.trim() : f.key.trim(),
+            value: typeof f.value === 'string' ? f.value : '',
+            multiline: Boolean(f.multiline),
+          }))
+      : [];
+
+    const relatedCharacterIds = Array.isArray(w.relatedCharacterIds)
+      ? Array.from(
+          new Set(
+            w.relatedCharacterIds
+              .map((id) => (typeof id === 'string' ? id.trim() : ''))
+              .filter(Boolean)
+          )
+        )
+      : [];
+
+    const adultNote = typeof w.adultNote === 'string' ? w.adultNote : '';
+    const enableAdultNote = Boolean(w.enableAdultNote || adultNote.trim().length > 0);
+
+    return {
+      id: w.id,
+      filename: getWorldFilename(w),
+      folder: cleanFolder || undefined,
+      name: typeof w.name === 'string' ? w.name : w.id,
+      ruby: typeof w.ruby === 'string' ? w.ruby : '',
+      summary: typeof w.summary === 'string' ? w.summary : '',
+      details: typeof w.details === 'string' ? w.details : '',
+      customFields: normalizedCustomFields,
+      enableAdultNote,
+      adultNote,
+      relatedCharacterIds,
+    };
+  });
+
+  const rawWorldOrder = Array.isArray(raw.project?.worldOrder) ? raw.project.worldOrder : [];
+  const worldOrderMap = new Map<string, number>();
+  rawWorldOrder.forEach((id, idx) => {
+    if (typeof id === 'string' && id && !worldOrderMap.has(id)) {
+      worldOrderMap.set(id, idx);
+    }
+  });
+
+  const normalizedWorldSettings = [...normalizedWorldRaw].sort((a, b) => {
+    const idxA = worldOrderMap.get(a.id);
+    const idxB = worldOrderMap.get(b.id);
+    if (idxA !== undefined && idxB !== undefined) return idxA - idxB;
+    if (idxA !== undefined) return -1;
+    if (idxB !== undefined) return 1;
+    return 0;
+  });
+  const normalizedWorldOrder = normalizedWorldSettings.map((w) => w.id);
+
   return {
     ...raw,
     project: {
       ...raw.project,
       characterFolders: orderedFolders,
+      worldFolders: orderedWorldFolders,
       sceneFolders: orderedSceneFolders,
       characterOrder: normalizedCharacterOrder,
+      worldOrder: normalizedWorldOrder,
       plotOrder: normalizedPlotOrder,
       sceneOrder: normalizedSceneOrder,
       defaultCustomCommonFields: normalizedDefaultCommonFields,
@@ -408,6 +512,7 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
       customCharacterCategories: normalizedCustomCategories,
     },
     characters: normalizedCharacters,
+    worldSettings: normalizedWorldSettings,
     plots: normalizedPlots,
     scenes: normalizedScenes,
   };
@@ -572,6 +677,7 @@ export async function writeWorkspaceToDirectory(
   const projectToWrite: ProjectData = {
     ...workspace.project,
     characterOrder: workspace.characters.map((c) => c.id),
+    worldOrder: (workspace.worldSettings ?? []).map((w) => w.id),
     plotOrder: workspace.plots.map((p) => p.plotId),
     sceneOrder: workspace.scenes.map((s) => s.sceneId),
     defaultCustomCommonFields: workspace.project.defaultCustomCommonFields ?? [],
@@ -628,6 +734,60 @@ export async function writeWorkspaceToDirectory(
       if (entry.kind === 'directory' && !expectedSubdirFiles.has(entry.name)) {
         try {
           await charDir.removeEntry(entry.name, { recursive: true });
+        } catch {
+          // Ignore if permission or lock prevents removal
+        }
+      }
+    }
+  }
+
+  const worldDir = await rootDir.getDirectoryHandle('world', { create: true });
+  const expectedRootWorldFiles = new Set<string>();
+  const expectedWorldSubdirFiles = new Map<string, Set<string>>();
+
+  for (const rawFolder of workspace.project.worldFolders ?? []) {
+    const clean = sanitizeWorldFolderName(rawFolder);
+    if (clean && !expectedWorldSubdirFiles.has(clean)) {
+      expectedWorldSubdirFiles.set(clean, new Set<string>());
+    }
+  }
+
+  for (const worldItem of workspace.worldSettings ?? []) {
+    const fname = getWorldFilename(worldItem);
+    const folder = sanitizeWorldFolderName(worldItem.folder);
+    const serialized = JSON.stringify(
+      { ...worldItem, folder: folder || undefined, filename: fname },
+      null,
+      2
+    );
+
+    if (folder) {
+      let set = expectedWorldSubdirFiles.get(folder);
+      if (!set) {
+        set = new Set<string>();
+        expectedWorldSubdirFiles.set(folder, set);
+      }
+      set.add(fname);
+      const subDir = await worldDir.getDirectoryHandle(folder, { create: true });
+      await writeTextFile(subDir, fname, serialized);
+    } else {
+      expectedRootWorldFiles.add(fname);
+      await writeTextFile(worldDir, fname, serialized);
+    }
+  }
+
+  await cleanupStaleFiles(worldDir, '.json', expectedRootWorldFiles);
+
+  for (const [folderName, expectedFiles] of expectedWorldSubdirFiles.entries()) {
+    const subDir = await worldDir.getDirectoryHandle(folderName, { create: true });
+    await cleanupStaleFiles(subDir, '.json', expectedFiles);
+  }
+
+  if (typeof worldDir.removeEntry === 'function') {
+    for await (const entry of worldDir.values()) {
+      if (entry.kind === 'directory' && !expectedWorldSubdirFiles.has(entry.name)) {
+        try {
+          await worldDir.removeEntry(entry.name, { recursive: true });
         } catch {
           // Ignore if permission or lock prevents removal
         }
@@ -746,6 +906,50 @@ export async function readWorkspaceFromDirectory(
       ])
     );
 
+    const worldSettings: WorldSettingData[] = [];
+    const discoveredWorldFolders: string[] = [];
+    try {
+      const worldDir = await rootDir.getDirectoryHandle('world');
+      for await (const entry of worldDir.values()) {
+        if (entry.kind === 'file' && entry.name.endsWith('.json')) {
+          const f = await entry.getFile();
+          const parsed = JSON.parse(await f.text()) as WorldSettingData;
+          worldSettings.push({ ...parsed, folder: undefined, filename: entry.name });
+        } else if (entry.kind === 'directory') {
+          const folderName = sanitizeWorldFolderName(entry.name);
+          if (folderName) {
+            discoveredWorldFolders.push(folderName);
+            for await (const subEntry of entry.values()) {
+              if (subEntry.kind === 'file' && subEntry.name.endsWith('.json')) {
+                const f = await subEntry.getFile();
+                const parsed = JSON.parse(await f.text()) as WorldSettingData;
+                worldSettings.push({
+                  ...parsed,
+                  folder: folderName,
+                  filename: subEntry.name,
+                });
+              }
+            }
+          }
+        }
+      }
+      worldSettings.sort((a, b) =>
+        getWorldRelativePath(a).localeCompare(getWorldRelativePath(b), 'ja')
+      );
+    } catch {
+      // Optional folder
+    }
+
+    const mergedWorldFolders =
+      Array.isArray(project.worldFolders) || discoveredWorldFolders.length > 0
+        ? Array.from(
+            new Set([
+              ...(project.worldFolders ?? []).map(sanitizeWorldFolderName).filter(Boolean),
+              ...discoveredWorldFolders,
+            ])
+          )
+        : undefined;
+
     const plots: PlotData[] = [];
     try {
       const plotDir = await rootDir.getDirectoryHandle('plots');
@@ -805,9 +1009,11 @@ export async function readWorkspaceFromDirectory(
       project: {
         ...project,
         characterFolders: mergedFolders,
+        ...(mergedWorldFolders !== undefined ? { worldFolders: mergedWorldFolders } : {}),
         sceneFolders: mergedSceneFolders,
       },
       characters,
+      worldSettings,
       plots,
       scenes,
     });

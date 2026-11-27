@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronRight,
   FolderTree,
+  Globe,
   HardDrive,
   Keyboard,
   ListChecks,
@@ -40,6 +41,7 @@ interface GuideSection {
 const SCREEN_LABEL: Record<SelectedItem['type'], string> = {
   scene: 'シーン編集中',
   character: 'キャラ編集中',
+  world: '世界観編集中',
   plot: 'プロット編集中',
 };
 
@@ -202,6 +204,35 @@ export const UsageGuideTab: React.FC<UsageGuideTabProps> = ({
         ],
       },
       {
+        id: 'world-settings',
+        title: '世界観設定・フォルダ整理・変数参照',
+        shortLabel: '世界観設定',
+        relatedScreen: 'world',
+        icon: Globe,
+        entries: [
+          {
+            title: '舞台設定・アイテム設定の整理とドラッグ移動',
+            body: '左バーの world/ では初期フォルダ「舞台設定」「アイテム設定」のほか、任意のフォルダを作成して設定を分類できます。グリップアイコン（⋮⋮）のドラッグ＆ドロップでフォルダ間の移動や表示順の並び替えが可能です。',
+            keywords: ['世界観', '舞台設定', 'アイテム設定', 'world', 'フォルダ', 'ドラッグ'],
+          },
+          {
+            title: 'プリセット項目・関連キャラ・R18裏設定',
+            body: '世界観エディタでは基本項目のほか「舞台用」「アイテム用」「組織・用語用」プリセットや任意のカスタム項目を追加できます。登録済みキャラクターの関連付けや、R18モード時のみ表示される補足・裏設定も記録できます。',
+            keywords: ['プリセット', 'カスタム項目', '関連キャラ', 'R18', '裏設定', 'JSON'],
+          },
+          {
+            title: '世界観変数の参照と本文展開',
+            body: '右パネルの「設定参照」タブで「世界観」に切り替えると、詳細を確認しながら {{world.<id>.<field>}} 記法をワンクリック挿入できます。書き出しやプレビュー時に自動で展開されます。',
+            codeLines: [
+              '{{world.old_library.name}}',
+              '{{world.old_library.summary}}',
+              '{{world.old_library.adultNote}}',
+            ],
+            keywords: ['world', '変数', '設定参照', '展開'],
+          },
+        ],
+      },
+      {
         id: 'plots-folders',
         title: 'プロット・フォルダ連携・並び替え',
         shortLabel: 'プロットと整理',
@@ -251,6 +282,7 @@ export const UsageGuideTab: React.FC<UsageGuideTabProps> = ({
   const [openIds, setOpenIds] = useState<Record<string, boolean>>(() => ({
     'scene-writing': selectedItemType === 'scene',
     characters: selectedItemType === 'character',
+    'world-settings': selectedItemType === 'world',
     'plots-folders': selectedItemType === 'plot',
   }));
 
@@ -261,7 +293,9 @@ export const UsageGuideTab: React.FC<UsageGuideTabProps> = ({
         ? 'scene-writing'
         : selectedItemType === 'character'
           ? 'characters'
-          : 'plots-folders';
+          : selectedItemType === 'world'
+            ? 'world-settings'
+            : 'plots-folders';
     setOpenIds((prev) => ({ ...prev, [primaryId]: true }));
   }, [selectedItemType]);
 

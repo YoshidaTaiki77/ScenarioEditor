@@ -23,6 +23,7 @@ import type {
   PlotData,
   SceneData,
   VisibilityType,
+  WorldSettingData,
 } from '../types/scenario';
 import {
   compileSceneText,
@@ -40,6 +41,7 @@ interface SceneEditorPaneProps {
   allScenes: SceneData[];
   sceneFolders: string[];
   characters: CharacterData[];
+  worldSettings?: WorldSettingData[];
   activePlot?: PlotData;
   allPlots?: PlotData[];
   activeMode: ActiveMode;
@@ -77,6 +79,7 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
       allScenes,
       sceneFolders,
       characters,
+      worldSettings = [],
       activePlot,
       allPlots,
       activeMode,
@@ -119,10 +122,16 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
 
     const compiledPreview = useMemo(
       () =>
-        compileSceneText(scene.body, characters, activeMode, {
-          stripStructureMarkers: false,
-        }),
-      [scene.body, characters, activeMode]
+        compileSceneText(
+          scene.body,
+          characters,
+          activeMode,
+          {
+            stripStructureMarkers: false,
+          },
+          worldSettings
+        ),
+      [scene.body, characters, activeMode, worldSettings]
     );
 
     const charCount = useMemo(

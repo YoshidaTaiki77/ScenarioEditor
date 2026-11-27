@@ -1,4 +1,4 @@
-import type { ScenarioWorkspace } from '../types/scenario';
+import { DEFAULT_WORLD_FOLDERS, type ScenarioWorkspace } from '../types/scenario';
 
 export const INITIAL_WORKSPACE: ScenarioWorkspace = {
   project: {
@@ -12,6 +12,7 @@ export const INITIAL_WORKSPACE: ScenarioWorkspace = {
         sceneIds: ['scene_01_library', 'scene_02_rooftop_alt', 'scene_03_bedroom_adult'],
       },
     ],
+    worldFolders: [...DEFAULT_WORLD_FOLDERS],
   },
   characters: [
     {
@@ -67,6 +68,62 @@ export const INITIAL_WORKSPACE: ScenarioWorkspace = {
         adult: {},
       },
       lockedFields: [],
+    },
+  ],
+  worldSettings: [
+    {
+      id: 'old_library',
+      filename: 'old_library.json',
+      folder: '舞台設定',
+      name: '旧校舎の図書室',
+      ruby: 'きゅうこうしゃのとしょしつ',
+      summary: '放課後の西日が差し込む、静かな旧校舎二階の書架スペース。',
+      details:
+        '新校舎から渡り廊下で繋がる旧校舎二階にある図書室。天井が高く、奥の書架は人目が届きにくい。蓮と栞が図書委員として放課後の当番を務めている。',
+      customFields: [
+        {
+          key: 'location',
+          label: '場所・立地',
+          value: '旧校舎2階・渡り廊下の突き当たり',
+          multiline: false,
+        },
+        {
+          key: 'atmosphere',
+          label: '雰囲気・時間帯',
+          value: '放課後の夕方。西日と古い紙の匂い、時折遠くから吹奏楽部の音が聞こえる。',
+          multiline: true,
+        },
+      ],
+      relatedCharacterIds: ['ren', 'shiori'],
+      enableAdultNote: false,
+      adultNote: '',
+    },
+    {
+      id: 'pressed_flower_bookmark',
+      filename: 'pressed_flower_bookmark.json',
+      folder: 'アイテム設定',
+      name: '古い押し花の栞',
+      ruby: 'ふるいおしばなのしおり',
+      summary: '栞が大切にしている、青い小花を閉じ込めた手作りの栞。',
+      details:
+        '透明なフィルムに青い小花と生成りのリボンを添えた栞。栞が中学の頃から使っており、蓮に貸した本に挟んだままになっていたことが二人の距離を縮めるきっかけになる。',
+      customFields: [
+        {
+          key: 'appearance',
+          label: '外観・形状',
+          value: '透明フィルムに薄青い小花・生成りの細いリボン付き',
+          multiline: false,
+        },
+        {
+          key: 'origin',
+          label: '由来・入手経緯',
+          value: '栞の手作り。大切な本にだけ挟む習慣がある。',
+          multiline: true,
+        },
+      ],
+      relatedCharacterIds: ['shiori', 'ren'],
+      enableAdultNote: false,
+      adultNote: '',
     },
   ],
   plots: [
@@ -256,6 +313,7 @@ export function createWorkspaceFromTemplate({
         title: cleanTitle,
         activeMode,
         characterFolders: cloned.project.characterFolders ?? [],
+        worldFolders: cloned.project.worldFolders ?? [...DEFAULT_WORLD_FOLDERS],
         sceneFolders: cloned.project.sceneFolders ?? [],
       },
     };
@@ -283,9 +341,11 @@ export function createWorkspaceFromTemplate({
           },
         ],
         characterFolders: [],
+        worldFolders: [...DEFAULT_WORLD_FOLDERS],
         sceneFolders: [],
       },
       characters: [],
+      worldSettings: [],
       plots: [
         {
           plotId,
@@ -331,9 +391,11 @@ export function createWorkspaceFromTemplate({
         },
       ],
       characterFolders: [],
+      worldFolders: [...DEFAULT_WORLD_FOLDERS],
       sceneFolders: [],
     },
     characters: [],
+    worldSettings: [],
     plots: [
       {
         plotId,

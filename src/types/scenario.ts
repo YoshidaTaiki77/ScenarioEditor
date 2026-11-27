@@ -193,13 +193,38 @@ export interface ChapterConfig {
   sceneIds: string[];
 }
 
+export const DEFAULT_WORLD_FOLDERS = ['舞台設定', 'アイテム設定'] as const;
+
+export interface WorldCustomField {
+  key: string;
+  label: string;
+  value: string;
+  multiline?: boolean;
+}
+
+export interface WorldSettingData {
+  id: string;
+  filename?: string; // JSON filename in world/, e.g. "old_library.json"
+  folder?: string; // Subfolder name under world/, e.g. "舞台設定"
+  name: string;
+  ruby?: string;
+  summary: string;
+  details: string;
+  customFields?: WorldCustomField[];
+  enableAdultNote?: boolean;
+  adultNote?: string;
+  relatedCharacterIds?: string[];
+}
+
 export interface ProjectData {
   title: string;
   activeMode: ActiveMode;
   chapters: ChapterConfig[];
   characterFolders?: string[];
+  worldFolders?: string[];
   sceneFolders?: string[];
   characterOrder?: string[];
+  worldOrder?: string[];
   plotOrder?: string[];
   sceneOrder?: string[];
   defaultCustomCommonFields?: CustomCommonFieldTemplate[];
@@ -211,6 +236,7 @@ export interface ProjectData {
 export interface ScenarioWorkspace {
   project: ProjectData;
   characters: CharacterData[];
+  worldSettings?: WorldSettingData[];
   plots: PlotData[];
   scenes: SceneData[];
 }
@@ -218,6 +244,7 @@ export interface ScenarioWorkspace {
 export type SelectedItem =
   | { type: 'scene'; id: string }
   | { type: 'character'; id: string }
+  | { type: 'world'; id: string }
   | { type: 'plot'; id: string };
 
 export interface ProofreadIssue {

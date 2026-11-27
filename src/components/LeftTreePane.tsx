@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
@@ -23,17 +24,21 @@ import type {
   SceneData,
   SelectedItem,
   VisibilityType,
+  WorldSettingData,
 } from '../types/scenario';
 import {
   getCharacterFilename,
   getPlotFilename,
   getSceneFilename,
+  getWorldFilename,
 } from '../utils/storageManager';
 
 interface LeftTreePaneProps {
   activeMode: ActiveMode;
   characters: CharacterData[];
   characterFolders: string[];
+  worldSettings: WorldSettingData[];
+  worldFolders: string[];
   plots: PlotData[];
   scenes: SceneData[];
   sceneFolders: string[];
@@ -70,6 +75,22 @@ interface LeftTreePaneProps {
     targetFolder: string,
     side: 'before' | 'after'
   ) => void;
+  onAddWorldSetting: (folder?: string) => void;
+  onDeleteWorldSetting: (worldId: string) => void;
+  onCreateWorldFolder: (name: string) => { ok: boolean; error?: string };
+  onRenameWorldFolder: (oldName: string, newName: string) => { ok: boolean; error?: string };
+  onDeleteWorldFolder: (name: string) => void;
+  onMoveWorldToFolder: (worldId: string, folder?: string) => void;
+  onReorderWorld: (
+    sourceWorldId: string,
+    targetWorldId: string,
+    side: 'before' | 'after'
+  ) => void;
+  onReorderWorldFolder: (
+    sourceFolder: string,
+    targetFolder: string,
+    side: 'before' | 'after'
+  ) => void;
   onAddPlot: () => void;
   onDeletePlot: (plotId: string) => void;
   onReorderPlot: (sourcePlotId: string, targetPlotId: string, side: 'before' | 'after') => void;
@@ -94,6 +115,8 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
   activeMode,
   characters,
   characterFolders,
+  worldSettings,
+  worldFolders,
   plots,
   scenes,
   sceneFolders,
@@ -114,6 +137,14 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
   onMoveCharacterToFolder,
   onReorderCharacter,
   onReorderCharacterFolder,
+  onAddWorldSetting,
+  onDeleteWorldSetting,
+  onCreateWorldFolder,
+  onRenameWorldFolder,
+  onDeleteWorldFolder,
+  onMoveWorldToFolder,
+  onReorderWorld,
+  onReorderWorldFolder,
   onAddPlot,
   onDeletePlot,
   onReorderPlot,
@@ -122,10 +153,12 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
 }) => {
   const [openFolders, setOpenFolders] = useState({
     characters: true,
+    world: true,
     plots: true,
     scenes: true,
   });
   const [closedCharSubfolders, setClosedCharSubfolders] = useState<Record<string, boolean>>({});
+  const [closedWorldSubfolders, setClosedWorldSubfolders] = useState<Record<string, boolean>>({});
   const [closedSceneSubfolders, setClosedSceneSubfolders] = useState<Record<string, boolean>>({});
 
   // Create character folder inline state
@@ -185,6 +218,31 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
     side: 'before' | 'after';
   } | null>(null);
 
+  // Create world folder inline state
+  const [isAddingWorldFolder, setIsAddingWorldFolder] = useState(false);
+  const [newWorldFolderName, setNewWorldFolderName] = useState('');
+  const [worldFolderError, setWorldFolderError] = useState<string | null>(null);
+
+  // Rename world folder inline state
+  const [renamingWorldFolder, setRenamingWorldFolder] = useState<string | null>(null);
+  const [worldRenameDraft, setWorldRenameDraft] = useState('');
+  const [worldRenameError, setWorldRenameError] = useState<string | null>(null);
+
+  // Drag & Drop world item across folders and within folder/root order (grip handle only)
+  const [draggingWorldId, setDraggingWorldId] = useState<string | null>(null);
+  const [dropTargetWorldFolder, setDropTargetWorldFolder] = useState<string | null>(null);
+  const [worldDropTarget, setWorldDropTarget] = useState<{
+    worldId: string;
+    side: 'before' | 'after';
+  } | null>(null);
+
+  // Drag & Drop world folder display order (grip handle only)
+  const [draggingWorldFolder, setDraggingWorldFolder] = useState<string | null>(null);
+  const [worldFolderDropTarget, setWorldFolderDropTarget] = useState<{
+    folder: string;
+    side: 'before' | 'after';
+  } | null>(null);
+
   const isAdult = activeMode === 'adult';
 
   const toggleFolder = (key: keyof typeof openFolders) => {
@@ -195,8 +253,35 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
     setClosedCharSubfolders((prev) => ({ ...prev, [folder]: !prev[folder] }));
   };
 
+  const toggleWorldSubfolder = (folder: string) => {
+    setClosedWorldSubfolders((prev) => ({ ...prev, [folder]: !prev[folder] }));
+  };
+
   const toggleSceneSubfolder = (folder: string) => {
     setClosedSceneSubfolders((prev) => ({ ...prev, [folder]: !prev[folder] }));
+  };
+
+  const handleCreateWorldFolderSubmit = () => {
+    const res = onCreateWorldFolder(newWorldFolderName);
+    if (!res.ok) {
+      setWorldFolderError(res.error ?? 'フォルダを作成できませんでした。');
+      return;
+    }
+    setNewWorldFolderName('');
+    setWorldFolderError(null);
+    setIsAddingWorldFolder(false);
+    setOpenFolders((prev) => ({ ...prev, world: true }));
+  };
+
+  const handleRenameWorldFolderSubmit = (oldName: string) => {
+    const res = onRenameWorldFolder(oldName, worldRenameDraft);
+    if (!res.ok) {
+      setWorldRenameError(res.error ?? 'フォルダ名を変更できませんでした。');
+      return;
+    }
+    setRenamingWorldFolder(null);
+    setWorldRenameDraft('');
+    setWorldRenameError(null);
   };
 
   const isDimmedInMode = (visibility: VisibilityType) => {
@@ -551,6 +636,142 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
     );
   };
 
+  const rootWorldSettings = worldSettings.filter((w) => !w.folder);
+  const canDragWorld = worldSettings.length > 1 || worldFolders.length > 0;
+
+  const renderWorldRow = (item: WorldSettingData) => {
+    const active = selectedItem.type === 'world' && selectedItem.id === item.id;
+    const isDragging = draggingWorldId === item.id;
+    const isWorldDropHere = worldDropTarget?.worldId === item.id && !isDragging;
+    const worldDropSide = isWorldDropHere ? worldDropTarget.side : null;
+
+    return (
+      <div
+        key={item.id}
+        data-world-row={item.id}
+        onDragOver={(e) => {
+          const isWorldDrag =
+            Boolean(draggingWorldId) || e.dataTransfer.types.includes('text/world-id');
+          if (!isWorldDrag) return;
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = 'move';
+          if (dropTargetWorldFolder !== null) setDropTargetWorldFolder(null);
+
+          if (draggingWorldId === item.id) {
+            if (worldDropTarget?.worldId === item.id) {
+              setWorldDropTarget(null);
+            }
+            return;
+          }
+
+          const rect = e.currentTarget.getBoundingClientRect();
+          const side: 'before' | 'after' =
+            e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+
+          if (worldDropTarget?.worldId !== item.id || worldDropTarget.side !== side) {
+            setWorldDropTarget({ worldId: item.id, side });
+          }
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+            if (worldDropTarget?.worldId === item.id) {
+              setWorldDropTarget(null);
+            }
+          }
+        }}
+        onDrop={(e) => {
+          const sourceId = draggingWorldId || e.dataTransfer.getData('text/world-id');
+          if (!sourceId) return;
+          e.preventDefault();
+          e.stopPropagation();
+
+          if (sourceId !== item.id) {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const side: 'before' | 'after' =
+              worldDropTarget?.worldId === item.id
+                ? worldDropTarget.side
+                : e.clientY < rect.top + rect.height / 2
+                  ? 'before'
+                  : 'after';
+            onReorderWorld(sourceId, item.id, side);
+          }
+          setDraggingWorldId(null);
+          setWorldDropTarget(null);
+          setDropTargetWorldFolder(null);
+        }}
+        className={`relative group flex items-center justify-between rounded transition-colors ${
+          isDragging ? 'opacity-45' : ''
+        } ${
+          active
+            ? isAdult
+              ? 'bg-rose-100/80 text-rose-900 font-medium'
+              : 'bg-slate-200/80 text-slate-900 font-medium'
+            : 'text-slate-700 hover:bg-slate-200/50'
+        }`}
+      >
+        {isWorldDropHere && worldDropSide && (
+          <div
+            aria-hidden="true"
+            className={`pointer-events-none absolute left-1 right-1 z-10 h-0.5 rounded-full ${
+              isAdult ? 'bg-rose-600' : 'bg-slate-800'
+            } ${worldDropSide === 'before' ? '-top-0.5' : '-bottom-0.5'}`}
+          />
+        )}
+
+        {canDragWorld && (
+          <span
+            draggable
+            onDragStart={(e) => {
+              e.stopPropagation();
+              const row = e.currentTarget.closest('[data-world-row]') as HTMLElement | null;
+              if (row && e.dataTransfer.setDragImage) {
+                e.dataTransfer.setDragImage(row, 16, 14);
+              }
+              setDraggingWorldId(item.id);
+              e.dataTransfer.effectAllowed = 'move';
+              e.dataTransfer.setData('text/world-id', item.id);
+            }}
+            onDragEnd={() => {
+              setDraggingWorldId(null);
+              setWorldDropTarget(null);
+              setDropTargetWorldFolder(null);
+            }}
+            title="ドラッグして並び替え・フォルダ移動"
+            className="ml-1 flex shrink-0 cursor-grab items-center justify-center rounded p-0.5 text-slate-300 hover:text-slate-600 active:cursor-grabbing"
+          >
+            <GripVertical className="h-3.5 w-3.5" />
+          </span>
+        )}
+
+        <button
+          type="button"
+          onClick={() => onSelect({ type: 'world', id: item.id })}
+          className={`flex min-w-0 flex-1 items-center justify-between gap-2 py-1.5 pr-1.5 text-left ${
+            canDragWorld ? 'pl-1' : 'pl-2'
+          }`}
+        >
+          <span className="flex min-w-0 items-center gap-2 truncate">
+            <BookOpen className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+            <span className="truncate">{item.name || item.id}</span>
+          </span>
+          <span className="font-code text-[10px] text-slate-400 shrink-0 truncate max-w-[74px] group-hover:hidden">
+            {getWorldFilename(item)}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onDeleteWorldSetting(item.id)}
+          title="この世界観設定を削除"
+          className="mr-1 hidden rounded p-1 text-slate-400 hover:bg-slate-300/60 hover:text-rose-600 group-hover:block shrink-0"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      </div>
+    );
+  };
+
   return (
     <aside
       className={`flex h-full shrink-0 flex-col border-r border-slate-200 select-none ${
@@ -563,7 +784,7 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
         <span className="text-xs font-semibold text-slate-700">プロジェクト構成</span>
         <div className="flex items-center gap-1.5">
           <span className="font-code text-[11px] text-slate-400 tabular-nums">
-            {characters.length + plots.length + scenes.length} files
+            {characters.length + worldSettings.length + plots.length + scenes.length} files
           </span>
           {onClose && (
             <button
@@ -977,6 +1198,411 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                 className="space-y-0.5 pl-1"
               >
                 {rootCharacters.map(renderCharacterRow)}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* world/ (世界観設定) */}
+        <div>
+          <div
+            onDragOver={(e) => {
+              const isWorldDrag =
+                Boolean(draggingWorldId) || e.dataTransfer.types.includes('text/world-id');
+              if (!isWorldDrag) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              if (worldDropTarget !== null) setWorldDropTarget(null);
+              if (dropTargetWorldFolder !== '__root__') setDropTargetWorldFolder('__root__');
+            }}
+            onDragLeave={() => {
+              if (dropTargetWorldFolder === '__root__') setDropTargetWorldFolder(null);
+            }}
+            onDrop={(e) => {
+              const worldId = draggingWorldId || e.dataTransfer.getData('text/world-id');
+              if (!worldId) return;
+              e.preventDefault();
+              onMoveWorldToFolder(worldId, undefined);
+              setDraggingWorldId(null);
+              setWorldDropTarget(null);
+              setDropTargetWorldFolder(null);
+            }}
+            className={`flex items-center justify-between rounded px-1.5 py-1 text-slate-600 transition-colors ${
+              dropTargetWorldFolder === '__root__'
+                ? isAdult
+                  ? 'bg-rose-100/70 ring-1 ring-rose-400'
+                  : 'bg-slate-200/80 ring-1 ring-slate-400'
+                : ''
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => toggleFolder('world')}
+              className="flex items-center gap-1.5 font-medium hover:text-slate-900"
+            >
+              {openFolders.world ? (
+                <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+              )}
+              <Folder className="h-3.5 w-3.5 text-slate-400" />
+              <span className="font-code text-[11px]">world/</span>
+              <span className="text-[10px] font-normal text-slate-400">世界観</span>
+            </button>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenFolders((prev) => ({ ...prev, world: true }));
+                  setIsAddingWorldFolder((v) => !v);
+                  setWorldFolderError(null);
+                  setNewWorldFolderName('');
+                }}
+                title="世界観フォルダを追加（例: 組織・用語）"
+                className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
+              >
+                <FolderPlus className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onAddWorldSetting(undefined)}
+                title="世界観設定を追加"
+                className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {openFolders.world && (
+            <div className="mt-0.5 space-y-1 pl-3">
+              {isAddingWorldFolder && (
+                <div className="mb-1.5 rounded border border-slate-200 bg-white p-1.5 space-y-1">
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="text"
+                      autoFocus
+                      value={newWorldFolderName}
+                      onChange={(e) => {
+                        setNewWorldFolderName(e.target.value);
+                        setWorldFolderError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                          handleCreateWorldFolderSubmit();
+                        }
+                        if (e.key === 'Escape') {
+                          setIsAddingWorldFolder(false);
+                          setWorldFolderError(null);
+                        }
+                      }}
+                      placeholder="フォルダ名（例: 組織・用語）"
+                      className="min-w-0 flex-1 rounded border border-slate-200 px-1.5 py-1 text-[11px] text-slate-900 focus:border-slate-400 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCreateWorldFolderSubmit}
+                      title="作成"
+                      className="rounded bg-slate-800 p-1 text-white hover:bg-slate-900 shrink-0"
+                    >
+                      <Check className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAddingWorldFolder(false);
+                        setWorldFolderError(null);
+                      }}
+                      title="キャンセル"
+                      className="rounded border border-slate-200 p-1 text-slate-400 hover:bg-slate-100 shrink-0"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                  {worldFolderError && (
+                    <p className="text-[10px] font-medium text-rose-600">{worldFolderError}</p>
+                  )}
+                </div>
+              )}
+
+              {/* World Subfolders (舞台設定 / アイテム設定 / custom) */}
+              {worldFolders.map((folder) => {
+                const itemsInFolder = worldSettings.filter((w) => w.folder === folder);
+                const isSubOpen = !closedWorldSubfolders[folder];
+                const isRenaming = renamingWorldFolder === folder;
+                const isDropHere = dropTargetWorldFolder === folder;
+                const isFolderDragging = draggingWorldFolder === folder;
+                const isFolderDropHere =
+                  worldFolderDropTarget?.folder === folder && !isFolderDragging;
+                const folderDropSide = isFolderDropHere ? worldFolderDropTarget.side : null;
+
+                return (
+                  <div
+                    key={folder}
+                    onDragOver={(e) => {
+                      const isFolderDrag =
+                        Boolean(draggingWorldFolder) ||
+                        e.dataTransfer.types.includes('text/world-folder');
+                      if (isFolderDrag) {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        if (draggingWorldFolder === folder) {
+                          if (worldFolderDropTarget?.folder === folder) {
+                            setWorldFolderDropTarget(null);
+                          }
+                          return;
+                        }
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const side: 'before' | 'after' =
+                          e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+                        if (
+                          worldFolderDropTarget?.folder !== folder ||
+                          worldFolderDropTarget.side !== side
+                        ) {
+                          setWorldFolderDropTarget({ folder, side });
+                        }
+                        return;
+                      }
+
+                      const isWorldDrag =
+                        Boolean(draggingWorldId) ||
+                        e.dataTransfer.types.includes('text/world-id');
+                      if (!isWorldDrag) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      if (worldDropTarget !== null) setWorldDropTarget(null);
+                      if (dropTargetWorldFolder !== folder) setDropTargetWorldFolder(folder);
+                    }}
+                    onDragLeave={(e) => {
+                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                        if (dropTargetWorldFolder === folder) setDropTargetWorldFolder(null);
+                        if (worldFolderDropTarget?.folder === folder) {
+                          setWorldFolderDropTarget(null);
+                        }
+                      }
+                    }}
+                    onDrop={(e) => {
+                      const sourceFolder =
+                        draggingWorldFolder || e.dataTransfer.getData('text/world-folder');
+                      if (sourceFolder) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (sourceFolder !== folder) {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const side: 'before' | 'after' =
+                            worldFolderDropTarget?.folder === folder
+                              ? worldFolderDropTarget.side
+                              : e.clientY < rect.top + rect.height / 2
+                                ? 'before'
+                                : 'after';
+                          onReorderWorldFolder(sourceFolder, folder, side);
+                        }
+                        setDraggingWorldFolder(null);
+                        setWorldFolderDropTarget(null);
+                        return;
+                      }
+
+                      const worldId =
+                        draggingWorldId || e.dataTransfer.getData('text/world-id');
+                      if (!worldId) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onMoveWorldToFolder(worldId, folder);
+                      setDraggingWorldId(null);
+                      setWorldDropTarget(null);
+                      setDropTargetWorldFolder(null);
+                    }}
+                    className={`relative rounded transition-colors ${
+                      isFolderDragging ? 'opacity-45' : ''
+                    } ${
+                      isDropHere
+                        ? isAdult
+                          ? 'bg-rose-100/70 ring-1 ring-rose-400'
+                          : 'bg-slate-200/80 ring-1 ring-slate-400'
+                        : ''
+                    }`}
+                  >
+                    {isFolderDropHere && folderDropSide && (
+                      <div
+                        aria-hidden="true"
+                        className={`pointer-events-none absolute left-1 right-1 z-10 h-0.5 rounded-full ${
+                          isAdult ? 'bg-rose-600' : 'bg-slate-800'
+                        } ${folderDropSide === 'before' ? '-top-0.5' : '-bottom-0.5'}`}
+                      />
+                    )}
+
+                    {isRenaming ? (
+                      <div className="p-1 space-y-1">
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            autoFocus
+                            value={worldRenameDraft}
+                            onChange={(e) => {
+                              setWorldRenameDraft(e.target.value);
+                              setWorldRenameError(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                                handleRenameWorldFolderSubmit(folder);
+                              }
+                              if (e.key === 'Escape') {
+                                setRenamingWorldFolder(null);
+                                setWorldRenameError(null);
+                              }
+                            }}
+                            className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[11px] text-slate-900 focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRenameWorldFolderSubmit(folder)}
+                            className="rounded bg-slate-800 p-0.5 text-white hover:bg-slate-900"
+                          >
+                            <Check className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRenamingWorldFolder(null);
+                              setWorldRenameError(null);
+                            }}
+                            className="rounded border border-slate-200 bg-white p-0.5 text-slate-400 hover:bg-slate-100"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                        {worldRenameError && (
+                          <p className="text-[10px] font-medium text-rose-600">
+                            {worldRenameError}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div
+                        data-world-folder-header={folder}
+                        className="group flex items-center justify-between rounded py-1 pr-1.5 pl-0.5 text-slate-600 hover:bg-slate-200/50"
+                      >
+                        {worldFolders.length > 1 && (
+                          <span
+                            draggable
+                            onDragStart={(e) => {
+                              e.stopPropagation();
+                              const headerRow = e.currentTarget.closest(
+                                '[data-world-folder-header]'
+                              ) as HTMLElement | null;
+                              if (headerRow && e.dataTransfer.setDragImage) {
+                                e.dataTransfer.setDragImage(headerRow, 16, 12);
+                              }
+                              setDraggingWorldFolder(folder);
+                              e.dataTransfer.effectAllowed = 'move';
+                              e.dataTransfer.setData('text/world-folder', folder);
+                            }}
+                            onDragEnd={() => {
+                              setDraggingWorldFolder(null);
+                              setWorldFolderDropTarget(null);
+                            }}
+                            title="ドラッグしてフォルダの表示順を並び替え"
+                            className="mr-0.5 flex shrink-0 cursor-grab items-center justify-center rounded p-0.5 text-slate-300 hover:text-slate-600 active:cursor-grabbing"
+                          >
+                            <GripVertical className="h-3.5 w-3.5" />
+                          </span>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => toggleWorldSubfolder(folder)}
+                          className={`flex min-w-0 flex-1 items-center gap-1.5 text-left font-medium hover:text-slate-900 ${
+                            worldFolders.length > 1 ? '' : 'pl-1'
+                          }`}
+                        >
+                          {isSubOpen ? (
+                            <ChevronDown className="h-3 w-3 text-slate-400 shrink-0" />
+                          ) : (
+                            <ChevronRight className="h-3 w-3 text-slate-400 shrink-0" />
+                          )}
+                          <Folder className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                          <span className="truncate text-[11px] text-slate-700">{folder}</span>
+                          <span className="font-code text-[10px] text-slate-400 tabular-nums shrink-0">
+                            {itemsInFolder.length}
+                          </span>
+                        </button>
+
+                        <div className="hidden items-center gap-0.5 group-hover:flex shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => onAddWorldSetting(folder)}
+                            title={`${folder} に設定を追加`}
+                            className="rounded p-0.5 text-slate-400 hover:bg-slate-300/60 hover:text-slate-800"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRenamingWorldFolder(folder);
+                              setWorldRenameDraft(folder);
+                              setWorldRenameError(null);
+                            }}
+                            title="フォルダ名を変更"
+                            className="rounded p-0.5 text-slate-400 hover:bg-slate-300/60 hover:text-slate-800"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteWorldFolder(folder)}
+                            title="フォルダを削除（中の設定は直下へ移動）"
+                            className="rounded p-0.5 text-slate-400 hover:bg-slate-300/60 hover:text-rose-600"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {isSubOpen && (
+                      <div className="mt-0.5 space-y-0.5 pl-4">
+                        {itemsInFolder.length > 0 ? (
+                          itemsInFolder.map(renderWorldRow)
+                        ) : (
+                          <div className="px-2 py-1 text-[10px] text-slate-400">
+                            空のフォルダ（＋またはドラッグで追加）
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Root / Uncategorized World Settings */}
+              <div
+                onDragOver={(e) => {
+                  const isWorldDrag =
+                    Boolean(draggingWorldId) || e.dataTransfer.types.includes('text/world-id');
+                  if (!isWorldDrag) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (worldDropTarget !== null) setWorldDropTarget(null);
+                  if (dropTargetWorldFolder !== '__root__') setDropTargetWorldFolder('__root__');
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                    if (dropTargetWorldFolder === '__root__') setDropTargetWorldFolder(null);
+                  }
+                }}
+                onDrop={(e) => {
+                  const worldId = draggingWorldId || e.dataTransfer.getData('text/world-id');
+                  if (!worldId) return;
+                  e.preventDefault();
+                  onMoveWorldToFolder(worldId, undefined);
+                  setDraggingWorldId(null);
+                  setWorldDropTarget(null);
+                  setDropTargetWorldFolder(null);
+                }}
+                className="space-y-0.5 pl-1"
+              >
+                {rootWorldSettings.map(renderWorldRow)}
               </div>
             </div>
           )}

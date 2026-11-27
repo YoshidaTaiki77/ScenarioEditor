@@ -17,6 +17,7 @@ import {
   type SceneData,
   type SelectedItem,
   type VisibilityType,
+  type WorldSettingData,
 } from './types/scenario';
 import { INITIAL_WORKSPACE, createWorkspaceFromTemplate } from './data/initialProject';
 import { exportScenarioBundle } from './utils/scenarioEngine';
@@ -26,9 +27,11 @@ import {
   getCharacterFilename,
   getPlotFilename,
   getSceneFilename,
+  getWorldFilename,
   normalizeWorkspace,
   sanitizeCharacterFolderName,
   sanitizeSceneFolderName,
+  sanitizeWorldFolderName,
   saveWorkspaceToBrowser,
   storageManager,
   triggerDownload,
@@ -43,6 +46,7 @@ import {
   type SceneEditorHandle,
 } from './components/SceneEditorPane';
 import { CharacterEditorPane } from './components/CharacterEditorPane';
+import { WorldEditorPane } from './components/WorldEditorPane';
 import { PlotBoard, type MoveCardPosition } from './components/PlotBoard';
 import { NewPlotModal, type CreatePlotPayload } from './components/NewPlotModal';
 import {
@@ -477,6 +481,11 @@ export default function App() {
     if (selectedItem.type !== 'character') return null;
     return workspace.characters.find((c) => c.id === selectedItem.id) ?? null;
   }, [workspace.characters, selectedItem]);
+
+  const activeWorldSetting = useMemo(() => {
+    if (selectedItem.type !== 'world') return null;
+    return (workspace.worldSettings ?? []).find((w) => w.id === selectedItem.id) ?? null;
+  }, [workspace.worldSettings, selectedItem]);
 
   const activePlot = useMemo(() => {
     if (selectedItem.type === 'plot') {
@@ -1897,6 +1906,313 @@ export default function App() {
     []
   );
 
+  // World Settings CRUD, Folder & Drag-and-Drop Handlers
+  const handleAddWorldSetting = (folder?: string) => {
+    const cleanFolder = sanitizeWorldFolderName(folder) || undefined;
+    const existing = workspace.worldSettings ?? [];
+    let num = existing.length + 1;
+    let id = `world_${num}`;
+    const usedIds = new Set(existing.map((w) => w.id));
+    while (usedIds.has(id)) {
+      num++;
+      id = `world_${num}`;
+    }
+
+    const defaultName =
+      cleanFolder === '舞台設定'
+        ? `新しい舞台 ${num}`
+        : cleanFolder === 'アイテム設定'
+          ? `新しいアイテム ${num}`
+          : cleanFolder
+            ? `新しい${cleanFolder} ${num}`
+            : `新しい世界観設定 ${num}`;
+
+    const newItem: WorldSettingData = {
+      id,
+      filename: `${id}.json`,
+      folder: cleanFolder,
+      name: defaultName,
+      ruby: '',
+      summary: '',
+      details: '',
+      customFields: [],
+      enableAdultNote: false,
+      adultNote: '',
+      relatedCharacterIds: [],
+    };
+
+    setWorkspace((prev) => {
+      const prevWorld = prev.worldSettings ?? [];
+      const prevFolders = prev.project.worldFolders ?? [];
+      const nextFolders =
+        cleanFolder && !prevFolders.includes(cleanFolder)
+          ? [...prevFolders, cleanFolder]
+          : prevFolders;
+      const nextWorld = [...prevWorld, newItem];
+      return {
+        ...prev,
+        project: {
+          ...prev.project,
+          worldFolders: nextFolders,
+          worldOrder: nextWorld.map((w) => w.id),
+        },
+        worldSettings: nextWorld,
+      };
+    });
+
+    setSelectedItem({ type: 'world', id });
+  };
+
+  const handleUpdateWorldSetting = (updated: WorldSettingData) => {
+    setWorkspace((prev) => ({
+      ...prev,
+      worldSettings: (prev.worldSettings ?? []).map((w) => (w.id === updated.id ? updated : w)),
+    }));
+  };
+
+  const handleDeleteWorldSetting = (worldId: string) => {
+    const remaining = (workspace.worldSettings ?? []).filter((w) => w.id !== worldId);
+    setWorkspace((prev) => {
+      const nextWorld = (prev.worldSettings ?? []).filter((w) => w.id !== worldId);
+      return {
+        ...prev,
+        worldSettings: nextWorld,
+        project: {
+          ...prev.project,
+          worldOrder: nextWorld.map((w) => w.id),
+        },
+      };
+    });
+
+    if (selectedItem.type === 'world' && selectedItem.id === worldId) {
+      if (remaining.length > 0) {
+        setSelectedItem({ type: 'world', id: remaining[0].id });
+      } else if (workspace.scenes.length > 0) {
+        setSelectedItem({ type: 'scene', id: workspace.scenes[0].sceneId });
+      } else if (workspace.characters.length > 0) {
+        setSelectedItem({ type: 'character', id: workspace.characters[0].id });
+      }
+    }
+  };
+
+  const handleCreateWorldFolder = (rawName: string): { ok: boolean; error?: string } => {
+    const clean = sanitizeWorldFolderName(rawName);
+    if (!clean) {
+      return { ok: false, error: '有効なフォルダ名を入力してください。' };
+    }
+    const existing = workspace.project.worldFolders ?? [];
+    if (existing.includes(clean)) {
+      return { ok: false, error: '同名のフォルダが既に存在します。' };
+    }
+    setWorkspace((prev) => ({
+      ...prev,
+      project: {
+        ...prev.project,
+        worldFolders: [...(prev.project.worldFolders ?? []), clean],
+      },
+    }));
+    return { ok: true };
+  };
+
+  const handleRenameWorldFolder = (
+    oldName: string,
+    rawNewName: string
+  ): { ok: boolean; error?: string } => {
+    const clean = sanitizeWorldFolderName(rawNewName);
+    if (!clean) {
+      return { ok: false, error: '有効なフォルダ名を入力してください。' };
+    }
+    if (clean === oldName) return { ok: true };
+    const existing = workspace.project.worldFolders ?? [];
+    if (existing.includes(clean)) {
+      return { ok: false, error: '同名のフォルダが既に存在します。' };
+    }
+    setWorkspace((prev) => ({
+      ...prev,
+      project: {
+        ...prev.project,
+        worldFolders: (prev.project.worldFolders ?? []).map((f) => (f === oldName ? clean : f)),
+      },
+      worldSettings: (prev.worldSettings ?? []).map((w) =>
+        w.folder === oldName ? { ...w, folder: clean } : w
+      ),
+    }));
+    return { ok: true };
+  };
+
+  const handleDeleteWorldFolder = (folderName: string) => {
+    setWorkspace((prev) => {
+      const prevWorld = prev.worldSettings ?? [];
+      const targetRootFiles = new Set(
+        prevWorld
+          .filter((w) => !w.folder)
+          .map((w) => getWorldFilename(w).toLowerCase())
+      );
+
+      const updatedWorld = prevWorld.map((w) => {
+        if (w.folder !== folderName) return w;
+        let nextFilename = getWorldFilename(w);
+        if (targetRootFiles.has(nextFilename.toLowerCase())) {
+          const base = nextFilename.replace(/\.json$/i, '');
+          let n = 2;
+          while (targetRootFiles.has(`${base}_${n}.json`.toLowerCase())) n++;
+          nextFilename = `${base}_${n}.json`;
+        }
+        targetRootFiles.add(nextFilename.toLowerCase());
+        return { ...w, folder: undefined, filename: nextFilename };
+      });
+
+      return {
+        ...prev,
+        project: {
+          ...prev.project,
+          worldFolders: (prev.project.worldFolders ?? []).filter((f) => f !== folderName),
+        },
+        worldSettings: updatedWorld,
+      };
+    });
+  };
+
+  const handleMoveWorldToFolder = (worldId: string, folder?: string) => {
+    const cleanFolder = sanitizeWorldFolderName(folder) || undefined;
+    setWorkspace((prev) => {
+      const prevWorld = prev.worldSettings ?? [];
+      const targetItem = prevWorld.find((w) => w.id === worldId);
+      if (!targetItem) return prev;
+      if ((targetItem.folder ?? undefined) === cleanFolder) return prev;
+
+      const siblingsInDest = new Set(
+        prevWorld
+          .filter(
+            (w) => w.id !== worldId && (w.folder ?? undefined) === cleanFolder
+          )
+          .map((w) => getWorldFilename(w).toLowerCase())
+      );
+
+      let nextFilename = getWorldFilename(targetItem);
+      if (siblingsInDest.has(nextFilename.toLowerCase())) {
+        const base = nextFilename.replace(/\.json$/i, '');
+        let n = 2;
+        while (siblingsInDest.has(`${base}_${n}.json`.toLowerCase())) n++;
+        nextFilename = `${base}_${n}.json`;
+      }
+
+      const prevFolders = prev.project.worldFolders ?? [];
+      const nextFolders =
+        cleanFolder && !prevFolders.includes(cleanFolder)
+          ? [...prevFolders, cleanFolder]
+          : prevFolders;
+
+      return {
+        ...prev,
+        project: {
+          ...prev.project,
+          worldFolders: nextFolders,
+        },
+        worldSettings: prevWorld.map((w) =>
+          w.id === worldId ? { ...w, folder: cleanFolder, filename: nextFilename } : w
+        ),
+      };
+    });
+  };
+
+  const handleReorderWorld = useCallback(
+    (sourceWorldId: string, targetWorldId: string, side: 'before' | 'after') => {
+      if (sourceWorldId === targetWorldId) return;
+      setWorkspace((prev) => {
+        const prevWorld = prev.worldSettings ?? [];
+        const fromIndex = prevWorld.findIndex((w) => w.id === sourceWorldId);
+        const hoverIndex = prevWorld.findIndex((w) => w.id === targetWorldId);
+        if (fromIndex === -1 || hoverIndex === -1) return prev;
+
+        const sourceItem = prevWorld[fromIndex];
+        const targetItem = prevWorld[hoverIndex];
+        const sourceFolder = sourceItem.folder ?? undefined;
+        const targetFolder = targetItem.folder ?? undefined;
+
+        const rawTarget = side === 'before' ? hoverIndex : hoverIndex + 1;
+        const insertAt = Math.max(
+          0,
+          Math.min(prevWorld.length - 1, fromIndex < rawTarget ? rawTarget - 1 : rawTarget)
+        );
+        if (insertAt === fromIndex && sourceFolder === targetFolder) return prev;
+
+        let nextFilename = getWorldFilename(sourceItem);
+        if (sourceFolder !== targetFolder) {
+          const siblingsInDest = new Set(
+            prevWorld
+              .filter((w) => w.id !== sourceWorldId && (w.folder ?? undefined) === targetFolder)
+              .map((w) => getWorldFilename(w).toLowerCase())
+          );
+          if (siblingsInDest.has(nextFilename.toLowerCase())) {
+            const base = nextFilename.replace(/\.json$/i, '');
+            let n = 2;
+            while (siblingsInDest.has(`${base}_${n}.json`.toLowerCase())) n++;
+            nextFilename = `${base}_${n}.json`;
+          }
+        }
+
+        const movedItem: WorldSettingData =
+          sourceFolder === targetFolder
+            ? sourceItem
+            : { ...sourceItem, folder: targetFolder, filename: nextFilename };
+
+        const nextWorld = [...prevWorld];
+        nextWorld.splice(fromIndex, 1);
+        nextWorld.splice(insertAt, 0, movedItem);
+
+        const prevFolders = prev.project.worldFolders ?? [];
+        const nextFolders =
+          targetFolder && !prevFolders.includes(targetFolder)
+            ? [...prevFolders, targetFolder]
+            : prevFolders;
+
+        return {
+          ...prev,
+          worldSettings: nextWorld,
+          project: {
+            ...prev.project,
+            worldFolders: nextFolders,
+            worldOrder: nextWorld.map((w) => w.id),
+          },
+        };
+      });
+    },
+    []
+  );
+
+  const handleReorderWorldFolder = useCallback(
+    (sourceFolder: string, targetFolder: string, side: 'before' | 'after') => {
+      if (sourceFolder === targetFolder) return;
+      setWorkspace((prev) => {
+        const current = prev.project.worldFolders ?? [];
+        const fromIndex = current.indexOf(sourceFolder);
+        const hoverIndex = current.indexOf(targetFolder);
+        if (fromIndex === -1 || hoverIndex === -1) return prev;
+
+        const rawTarget = side === 'before' ? hoverIndex : hoverIndex + 1;
+        const insertAt = Math.max(
+          0,
+          Math.min(current.length - 1, fromIndex < rawTarget ? rawTarget - 1 : rawTarget)
+        );
+        if (insertAt === fromIndex) return prev;
+
+        const nextFolders = [...current];
+        const [moved] = nextFolders.splice(fromIndex, 1);
+        nextFolders.splice(insertAt, 0, moved);
+
+        return {
+          ...prev,
+          project: {
+            ...prev.project,
+            worldFolders: nextFolders,
+          },
+        };
+      });
+    },
+    []
+  );
+
   const handleAddPlot = (payload: CreatePlotPayload) => {
     const suffix = Date.now().toString(36).slice(-4);
     const num = workspace.plots.length + 1;
@@ -2119,7 +2435,8 @@ export default function App() {
       workspace.characters,
       workspace.plots,
       activeMode,
-      activeScene
+      activeScene,
+      workspace.worldSettings ?? []
     );
     triggerDownload(filename, content);
   };
@@ -2130,7 +2447,9 @@ export default function App() {
       workspace.scenes,
       workspace.characters,
       workspace.plots,
-      activeMode
+      activeMode,
+      undefined,
+      workspace.worldSettings ?? []
     );
     triggerDownload(filename, content);
   };
@@ -2140,6 +2459,8 @@ export default function App() {
       activeMode={activeMode}
       characters={workspace.characters}
       characterFolders={workspace.project.characterFolders ?? []}
+      worldSettings={workspace.worldSettings ?? []}
+      worldFolders={workspace.project.worldFolders ?? []}
       plots={workspace.plots}
       scenes={workspace.scenes}
       sceneFolders={workspace.project.sceneFolders ?? []}
@@ -2165,6 +2486,14 @@ export default function App() {
       onMoveCharacterToFolder={handleMoveCharacterToFolder}
       onReorderCharacter={handleReorderCharacter}
       onReorderCharacterFolder={handleReorderCharacterFolder}
+      onAddWorldSetting={handleAddWorldSetting}
+      onDeleteWorldSetting={handleDeleteWorldSetting}
+      onCreateWorldFolder={handleCreateWorldFolder}
+      onRenameWorldFolder={handleRenameWorldFolder}
+      onDeleteWorldFolder={handleDeleteWorldFolder}
+      onMoveWorldToFolder={handleMoveWorldToFolder}
+      onReorderWorld={handleReorderWorld}
+      onReorderWorldFolder={handleReorderWorldFolder}
       onAddPlot={() => setIsNewPlotModalOpen(true)}
       onDeletePlot={handleDeletePlot}
       onReorderPlot={handleReorderPlot}
@@ -2179,6 +2508,8 @@ export default function App() {
       selectedItemType={selectedItem.type}
       scene={activeScene}
       characters={workspace.characters}
+      worldSettings={workspace.worldSettings ?? []}
+      worldFolders={workspace.project.worldFolders ?? []}
       cursorIndex={cursorIndex}
       onJumpToLine={(line) => sceneEditorRef.current?.jumpToLine(line)}
       onInsertSnippet={(snippet, caretBefore) =>
@@ -2292,6 +2623,7 @@ export default function App() {
               allScenes={workspace.scenes}
               sceneFolders={workspace.project.sceneFolders ?? []}
               characters={workspace.characters}
+              worldSettings={workspace.worldSettings ?? []}
               activePlot={activePlot}
               allPlots={workspace.plots}
               activeMode={activeMode}
@@ -2375,6 +2707,20 @@ export default function App() {
             />
           )}
 
+          {selectedItem.type === 'world' && activeWorldSetting && (
+            <WorldEditorPane
+              worldItem={activeWorldSetting}
+              allWorldSettings={workspace.worldSettings ?? []}
+              worldFolders={workspace.project.worldFolders ?? []}
+              characters={workspace.characters}
+              activeMode={activeMode}
+              onUpdateWorldSetting={handleUpdateWorldSetting}
+              onDeleteWorldSetting={handleDeleteWorldSetting}
+              onMoveWorldToFolder={handleMoveWorldToFolder}
+              onOpenCharacter={(charId) => setSelectedItem({ type: 'character', id: charId })}
+            />
+          )}
+
           {selectedItem.type === 'plot' && activePlot && (
             <PlotBoard
               plot={activePlot}
@@ -2395,6 +2741,7 @@ export default function App() {
           {!(
             (selectedItem.type === 'scene' && activeScene) ||
             (selectedItem.type === 'character' && activeCharacter) ||
+            (selectedItem.type === 'world' && activeWorldSetting) ||
             (selectedItem.type === 'plot' && activePlot)
           ) && (
             <div className="flex h-full flex-col items-center justify-center bg-white p-8 text-center">

@@ -7,6 +7,7 @@ import type {
   ResolvedCharacter,
   SceneData,
   VisibilityType,
+  WorldSettingData,
 } from '../types/scenario';
 
 const STANDARD_COMMON_KEYS = new Set([
@@ -171,6 +172,23 @@ export function resolveCharacterField(
   return resolved.allFields[field] ?? `{{${char.id}.${field}}}`;
 }
 
+export function resolveWorldField(
+  item: WorldSettingData,
+  field: string,
+  mode: ActiveMode
+): string {
+  if (field === 'name') return item.name ?? '';
+  if (field === 'ruby') return item.ruby ?? '';
+  if (field === 'summary') return item.summary ?? '';
+  if (field === 'details') return item.details ?? '';
+  if (field === 'adultNote') {
+    return mode === 'adult' ? (item.adultNote ?? '') : '';
+  }
+  const custom = (item.customFields ?? []).find((f) => f.key === field);
+  if (custom) return custom.value ?? '';
+  return `{{world.${item.id}.${field}}}`;
+}
+
 export interface CompileOptions {
   stripStructureMarkers?: boolean;
 }
@@ -179,7 +197,8 @@ export function compileSceneText(
   rawText: string,
   characters: CharacterData[],
   mode: ActiveMode,
-  options: CompileOptions = {}
+  options: CompileOptions = {},
+  worldSettings: WorldSettingData[] = []
 ): string {
   const { stripStructureMarkers = false } = options;
 
@@ -202,14 +221,25 @@ export function compileSceneText(
       .replace(/\[R18_BLOCK_END\]\r?\n?/gi, '');
   }
 
-  // 3. Resolve {{characterId.field}} and {{characterId.callPartner|relationship.targetId}} variable tags
+  // 3. Resolve {{world.<id>.<field>}}, {{characterId.field}}, and {{characterId.callPartner|relationship.targetId}} variable tags
   const charById = new Map(characters.map((c) => [c.id, c]));
+  const worldById = new Map(worldSettings.map((w) => [w.id, w]));
   output = output.replace(
     /\{\{\s*([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)?)\s*\}\}/g,
-    (match, charId, field) => {
-      const char = charById.get(charId);
+    (match, firstId, restField) => {
+      if (firstId === 'world' && restField.includes('.')) {
+        const dotIdx = restField.indexOf('.');
+        const worldId = restField.slice(0, dotIdx);
+        const worldField = restField.slice(dotIdx + 1);
+        const worldItem = worldById.get(worldId);
+        if (worldItem) {
+          return resolveWorldField(worldItem, worldField, mode);
+        }
+        return match;
+      }
+      const char = charById.get(firstId);
       if (!char) return match;
-      return resolveCharacterField(char, field, mode);
+      return resolveCharacterField(char, restField, mode);
     }
   );
 
@@ -295,11 +325,13 @@ const KNOWN_FIRST_PERSONS = [
 export function proofreadScene(
   rawText: string,
   characters: CharacterData[],
-  mode: ActiveMode
+  mode: ActiveMode,
+  worldSettings: WorldSettingData[] = []
 ): ProofreadIssue[] {
   const issues: ProofreadIssue[] = [];
   const lines = rawText.split('\n');
   const charById = new Map(characters.map((c) => [c.id, c]));
+  const worldById = new Map(worldSettings.map((w) => [w.id, w]));
 
   let activeIfModeDepth = 0;
   let activeIfModeLine = 1;
@@ -364,6 +396,44 @@ export function proofreadScene(
       const charId = varMatch[1];
       const field = varMatch[2];
       const targetId = varMatch[3];
+
+      // Handle {{world.<worldId>.<worldField>}} references
+      if (charId === 'world' && targetId) {
+        const worldItem = worldById.get(field);
+        if (!worldItem) {
+          issues.push({
+            id: `syntax-var-world-${lineNum}-${varMatch.index}`,
+            line: lineNum,
+            column: varMatch.index + 1,
+            severity: 'warning',
+            category: 'syntax',
+            message: `未登録の世界観設定 "${field}" が参照されています。`,
+            snippet: varMatch[0],
+          });
+        } else {
+          const validWorldFields = new Set([
+            'name',
+            'ruby',
+            'summary',
+            'details',
+            'adultNote',
+            ...(worldItem.customFields?.map((f) => f.key) ?? []),
+          ]);
+          if (!validWorldFields.has(targetId)) {
+            issues.push({
+              id: `syntax-var-world-field-${lineNum}-${varMatch.index}`,
+              line: lineNum,
+              column: varMatch.index + 1,
+              severity: 'warning',
+              category: 'syntax',
+              message: `世界観設定「${worldItem.name}」に未定義の項目 "${targetId}" が参照されています。`,
+              snippet: varMatch[0],
+            });
+          }
+        }
+        continue;
+      }
+
       const char = charById.get(charId);
       const validFields = new Set([
         'name',
@@ -502,7 +572,7 @@ export function proofreadScene(
           const resolved = resolveCharacterProfile(char, mode);
           const expectedFirstPerson = resolved.firstPerson;
           // Resolve variables inside this spoken fragment before pronoun scanning
-          const spokenCompiled = compileSceneText(spokenRaw, characters, mode);
+          const spokenCompiled = compileSceneText(spokenRaw, characters, mode, {}, worldSettings);
 
           for (const pronoun of KNOWN_FIRST_PERSONS) {
             if (pronoun === expectedFirstPerson) continue;
@@ -630,7 +700,8 @@ export function exportScenarioBundle(
   characters: CharacterData[],
   _plots: PlotData[],
   mode: ActiveMode,
-  singleScene?: SceneData
+  singleScene?: SceneData,
+  worldSettings: WorldSettingData[] = []
 ): { filename: string; content: string } {
   const suffix = mode === 'general' ? '_normal' : '_r18';
   const targetScenes = singleScene
@@ -647,9 +718,15 @@ export function exportScenarioBundle(
   ];
 
   const sceneChunks = targetScenes.map((scene, i) => {
-    const compiled = compileSceneText(scene.body, characters, mode, {
-      stripStructureMarkers: true,
-    });
+    const compiled = compileSceneText(
+      scene.body,
+      characters,
+      mode,
+      {
+        stripStructureMarkers: true,
+      },
+      worldSettings
+    );
     return [
       `■ シーン ${i + 1}: ${scene.title} (${scene.sceneId})`,
       `------------------------------------------------------------`,
