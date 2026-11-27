@@ -124,6 +124,7 @@ interface StandardOptionalFieldMeta {
 
 const STANDARD_OPTIONAL_FIELDS: StandardOptionalFieldMeta[] = [
   { key: 'ageDisplay', defaultLabel: '年齢表記' },
+  { key: 'gender', defaultLabel: '性別', placeholder: '例: 女性 / 男性 / 不明' },
   { key: 'secondPerson', defaultLabel: '二人称' },
   { key: 'speechStyle', defaultLabel: '口調', multiline: true },
   { key: 'callPartner', defaultLabel: '相手の呼び方（基本）' },
@@ -1380,6 +1381,7 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
                     })}
 
                     {renderStandardField('ageDisplay')}
+                    {renderStandardField('gender')}
                     {getStandardCategoryCustomFields('基本情報').map(renderCustomCommonField)}
                   </div>
                 </div>

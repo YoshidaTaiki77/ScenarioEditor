@@ -1620,6 +1620,7 @@ export default function App() {
           ruby: 'しんきキャラクター',
           firstPerson: '私',
           ageDisplay: '17歳',
+          gender: '',
           relationship: 'クラスメイト',
           callPartner: '結城くん',
           secondPerson: 'あなた',

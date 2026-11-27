@@ -222,6 +222,7 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
       common: {
         ...c.common,
         ageDisplay: c.common?.ageDisplay ?? gen.ageDisplay ?? seed?.common.ageDisplay ?? '',
+        gender: c.common?.gender ?? gen.gender ?? seed?.common.gender ?? '',
         relationship:
           c.common?.relationship ?? gen.relationship ?? seed?.common.relationship ?? '',
         callPartner:

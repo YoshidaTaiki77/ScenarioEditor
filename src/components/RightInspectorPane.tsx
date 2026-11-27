@@ -273,6 +273,7 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
     const optionalStandard: Array<{ key: keyof typeof resolvedChar; label: string }> = [
       { key: 'ruby', label: 'ルビ' },
       { key: 'ageDisplay', label: '年齢表記' },
+      { key: 'gender', label: '性別' },
       { key: 'relationship', label: '関係性' },
       { key: 'height', label: '身長' },
       { key: 'weight', label: '体重' },
@@ -732,7 +733,9 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                       </span>
                     </div>
                     <div className="text-[11px] text-slate-500">
-                      {resolvedChar.ageDisplay} · {resolvedChar.relationship}
+                      {[resolvedChar.gender, resolvedChar.ageDisplay, resolvedChar.relationship]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </div>
                   </div>
 

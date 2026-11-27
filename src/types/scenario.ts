@@ -7,6 +7,7 @@ export interface CharacterCommon {
   ruby: string;
   firstPerson: string;
   ageDisplay: string;
+  gender?: string;
   relationship: string;
   callPartner: string;
   secondPerson: string;
@@ -112,6 +113,7 @@ export interface ResolvedCharacter {
   weaknesses: string;
   firstPerson: string;
   ageDisplay: string;
+  gender: string;
   relationship: string;
   callPartner: string;
   secondPerson: string;
