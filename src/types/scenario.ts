@@ -8,6 +8,9 @@ export interface CharacterCommon {
   firstPerson: string;
   ageDisplay: string;
   gender?: string;
+  occupation?: string;
+  affiliation?: string;
+  roleTitle?: string;
   relationship: string;
   callPartner: string;
   secondPerson: string;
@@ -45,6 +48,7 @@ export interface ResolvedCharacterRelation {
 
 export const STANDARD_CHARACTER_CATEGORIES = [
   '基本情報',
+  '職業・所属',
   '話し方・セリフ',
   '対人・呼び方・関係性',
   '外見・体格',
@@ -137,6 +141,9 @@ export interface ResolvedCharacter {
   firstPerson: string;
   ageDisplay: string;
   gender: string;
+  occupation: string;
+  affiliation: string;
+  roleTitle: string;
   relationship: string;
   callPartner: string;
   secondPerson: string;

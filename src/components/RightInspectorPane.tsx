@@ -326,6 +326,9 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
       { key: 'ruby', label: 'ルビ' },
       { key: 'ageDisplay', label: '年齢表記' },
       { key: 'gender', label: '性別' },
+      { key: 'occupation', label: '職業' },
+      { key: 'affiliation', label: '所属' },
+      { key: 'roleTitle', label: '肩書き・役職' },
       { key: 'height', label: '身長' },
       { key: 'weight', label: '体重' },
       { key: 'bodyType', label: '体型 / 3サイズ' },
@@ -906,9 +909,15 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                         {resolvedChar.ruby}
                       </span>
                     </div>
-                    {(resolvedChar.gender || resolvedChar.ageDisplay) && (
+                    {(resolvedChar.gender ||
+                      resolvedChar.ageDisplay ||
+                      resolvedChar.occupation) && (
                       <div className="text-[11px] text-slate-500">
-                        {[resolvedChar.gender, resolvedChar.ageDisplay]
+                        {[
+                          resolvedChar.gender,
+                          resolvedChar.ageDisplay,
+                          resolvedChar.occupation,
+                        ]
                           .filter(Boolean)
                           .join(' · ')}
                       </div>
@@ -1044,7 +1053,13 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                         ['一人称', resolvedChar.firstPerson, 'firstPerson'],
                         ['二人称', resolvedChar.secondPerson, 'secondPerson'],
                         ['衣装', resolvedChar.costume, 'costume'],
-                      ] as const
+                        ...(resolvedChar.affiliation
+                          ? ([['所属', resolvedChar.affiliation, 'affiliation']] as const)
+                          : []),
+                        ...(resolvedChar.roleTitle
+                          ? ([['肩書き・役職', resolvedChar.roleTitle, 'roleTitle']] as const)
+                          : []),
+                      ] as ReadonlyArray<readonly [string, string, string]>
                     ).map(([label, val, fieldKey]) => {
                       const locked = resolvedChar.lockedFields.includes(fieldKey);
                       const hasNewline = val.includes('\n');

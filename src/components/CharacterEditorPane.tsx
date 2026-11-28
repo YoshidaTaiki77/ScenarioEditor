@@ -126,6 +126,21 @@ interface StandardOptionalFieldMeta {
 const STANDARD_OPTIONAL_FIELDS: StandardOptionalFieldMeta[] = [
   { key: 'ageDisplay', defaultLabel: '年齢表記' },
   { key: 'gender', defaultLabel: '性別', placeholder: '例: 女性 / 男性 / 不明' },
+  {
+    key: 'occupation',
+    defaultLabel: '職業',
+    placeholder: '例: 高校生 / カフェ店員 / 探偵 / 王宮魔導師',
+  },
+  {
+    key: 'affiliation',
+    defaultLabel: '所属',
+    placeholder: '例: 私立青葉高校 図書委員会 / 〇〇社 企画部 / 聖騎士団',
+  },
+  {
+    key: 'roleTitle',
+    defaultLabel: '肩書き・役職',
+    placeholder: '例: 生徒会長 / 部長 / 放課後当番 / 二つ名',
+  },
   { key: 'secondPerson', defaultLabel: '二人称' },
   { key: 'speechStyle', defaultLabel: '口調', multiline: true },
   { key: 'height', defaultLabel: '身長', placeholder: '例: 158cm' },
@@ -1403,7 +1418,20 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
                   </div>
                 </div>
 
-                {/* 2. 話し方・セリフ */}
+                {/* 2. 職業・所属 */}
+                <div className="space-y-3 border-t border-slate-100 pt-5">
+                  <h4 className="text-[11px] font-semibold tracking-wide text-slate-500">
+                    職業・所属
+                  </h4>
+                  <div className="grid grid-cols-1 @xl:grid-cols-2 gap-4">
+                    {renderStandardField('occupation')}
+                    {renderStandardField('affiliation')}
+                    {renderStandardField('roleTitle')}
+                    {getStandardCategoryCustomFields('職業・所属').map(renderCustomCommonField)}
+                  </div>
+                </div>
+
+                {/* 3. 話し方・セリフ */}
                 <div className="space-y-3 border-t border-slate-100 pt-5">
                   <h4 className="text-[11px] font-semibold tracking-wide text-slate-500">
                     話し方・セリフ
