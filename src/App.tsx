@@ -21,6 +21,7 @@ import {
 } from './types/scenario';
 import { INITIAL_WORKSPACE, createWorkspaceFromTemplate } from './data/initialProject';
 import { exportScenarioBundle } from './utils/scenarioEngine';
+import { createEmptyMangaPage, serializeMangaMarkdown } from './utils/mangaEngine';
 import {
   AUTO_SNAPSHOT_INTERVAL_MS,
   HISTORY_DIR_NAME,
@@ -56,6 +57,7 @@ import {
   type EmptyFolderChoice,
   type ProjectCreationSpec,
 } from './components/ProjectSwitchModal';
+import { MangaExportModal } from './components/MangaExportModal';
 import { RightInspectorPane } from './components/RightInspectorPane';
 import { OfflineIndicator } from './components/OfflineIndicator';
 
@@ -110,6 +112,11 @@ export default function App() {
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
   const [isResetBrowserModalOpen, setIsResetBrowserModalOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [mangaExportModal, setMangaExportModal] = useState<{
+    isOpen: boolean;
+    tab: 'csp' | 'script';
+    scope: 'current' | 'all';
+  }>({ isOpen: false, tab: 'csp', scope: 'current' });
   const [historySnapshots, setHistorySnapshots] = useState<HistorySnapshot[]>([]);
   const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
 
@@ -1220,6 +1227,7 @@ export default function App() {
         filename = `${id}_${n}.md`;
       }
 
+      const isMangaDefault = prev.project.defaultSceneFormat === 'manga';
       const newScene: SceneData = {
         sceneId: id,
         filename,
@@ -1230,7 +1238,16 @@ export default function App() {
           prevCard.characters && prevCard.characters.length > 0
             ? [...prevCard.characters]
             : prev.characters.map((c) => c.id),
-        body: '',
+        ...(isMangaDefault
+          ? {
+              format: 'manga' as const,
+              mangaBinding: 'rtl' as const,
+              mangaStartPage: 1,
+              body: serializeMangaMarkdown([createEmptyMangaPage(3)]),
+            }
+          : {
+              body: '',
+            }),
       };
 
       const prevFolders = prev.project.sceneFolders ?? [];
@@ -1310,14 +1327,24 @@ export default function App() {
     const cleanFolder = sanitizeSceneFolderName(folder) || undefined;
     const num = workspace.scenes.length + 1;
     const id = `scene_${String(num).padStart(2, '0')}_${Date.now().toString(36).slice(-4)}`;
+    const isMangaDefault = workspace.project.defaultSceneFormat === 'manga';
     const newScene: SceneData = {
       sceneId: id,
       filename: `${id}.md`,
       folder: cleanFolder,
-      title: `新規シーン ${num}`,
+      title: isMangaDefault ? `新規マンガ脚本 ${num}` : `新規シーン ${num}`,
       visibility: activeMode === 'adult' ? 'adult_only' : 'common',
       characters: workspace.characters.map((c) => c.id),
-      body: '',
+      ...(isMangaDefault
+        ? {
+            format: 'manga' as const,
+            mangaBinding: 'rtl' as const,
+            mangaStartPage: 1,
+            body: serializeMangaMarkdown([createEmptyMangaPage(3)]),
+          }
+        : {
+            body: '',
+          }),
     };
     setWorkspace((prev) => {
       const nextScenes = [...prev.scenes, newScene];
@@ -2521,6 +2548,11 @@ export default function App() {
     />
   );
 
+  const hasMangaScenes = useMemo(
+    () => workspace.scenes.some((s) => s.format === 'manga'),
+    [workspace.scenes]
+  );
+
   return (
     <div className="flex h-dvh w-screen flex-col overflow-hidden bg-slate-50 text-slate-900">
       <HeaderBar
@@ -2544,6 +2576,11 @@ export default function App() {
         onExportCurrentScene={handleExportCurrentScene}
         onExportAllScenes={handleExportAllScenes}
         hasActiveScene={!!activeScene}
+        hasMangaScenes={hasMangaScenes}
+        isActiveMangaScene={activeScene?.format === 'manga'}
+        onOpenMangaExport={(tab, scope) =>
+          setMangaExportModal({ isOpen: true, tab, scope })
+        }
         historyCount={historySnapshots.length}
         onOpenHistory={() => {
           setIsHistoryModalOpen(true);
@@ -2620,6 +2657,7 @@ export default function App() {
           {selectedItem.type === 'scene' && activeScene && (
             <SceneEditorPane
               ref={sceneEditorRef}
+              project={workspace.project}
               scene={activeScene}
               allScenes={workspace.scenes}
               sceneFolders={workspace.project.sceneFolders ?? []}
@@ -2644,6 +2682,9 @@ export default function App() {
               onSelectSplitPlot={(pid) => setSplitPlotId(pid)}
               onOpenScene={(id) => setSelectedItem({ type: 'scene', id })}
               onCursorChange={(idx) => setCursorIndex(idx)}
+              onOpenMangaExport={(tab = 'csp') =>
+                setMangaExportModal({ isOpen: true, tab, scope: 'current' })
+              }
             />
           )}
 
@@ -2838,6 +2879,19 @@ export default function App() {
         onCreateSnapshot={() => void handleCreateManualSnapshot()}
         onRestoreSnapshot={(snap) => void handleRestoreSnapshot(snap)}
         onDeleteSnapshot={(id) => void handleDeleteSnapshot(id)}
+      />
+
+      <MangaExportModal
+        isOpen={mangaExportModal.isOpen}
+        onClose={() => setMangaExportModal((prev) => ({ ...prev, isOpen: false }))}
+        project={workspace.project}
+        scenes={workspace.scenes}
+        activeScene={activeScene ?? undefined}
+        characters={workspace.characters}
+        worldSettings={workspace.worldSettings ?? []}
+        activeMode={activeMode}
+        initialTab={mangaExportModal.tab}
+        initialScope={mangaExportModal.scope}
       />
     </div>
   );

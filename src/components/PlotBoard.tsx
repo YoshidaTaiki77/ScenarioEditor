@@ -44,6 +44,7 @@ import {
   cleanupCardConnections,
   reassignChartSlotsAfterListReorder,
 } from '../utils/plotChartLayout';
+import { getPageCountGuide, parseMangaMarkdown } from '../utils/mangaEngine';
 import { getPlotFilename, triggerDownload } from '../utils/storage';
 import { PlotFlowChart } from './PlotFlowChart';
 import { SceneLinkCombobox, type SceneUsageEntry } from './SceneLinkCombobox';
@@ -536,16 +537,31 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
     let stagingCount = 0;
     let totalCurrentChars = 0;
     let totalTargetChars = 0;
+    let totalTargetPages = 0;
+    let totalCurrentPages = 0;
     for (const c of sortedCards) {
       if (c.status === 'done') doneCount++;
       if (c.inStaging) stagingCount++;
       if (c.targetLength && c.targetLength > 0) totalTargetChars += c.targetLength;
+      if (c.targetPages && c.targetPages > 0) totalTargetPages += c.targetPages;
       if (c.linkedSceneId) {
         const sc = scenes.find((s) => s.sceneId === c.linkedSceneId);
-        if (sc) totalCurrentChars += sc.body.length;
+        if (sc) {
+          totalCurrentChars += sc.body.length;
+          if (sc.format === 'manga') {
+            totalCurrentPages += parseMangaMarkdown(sc.body).length;
+          }
+        }
       }
     }
-    return { doneCount, stagingCount, totalCurrentChars, totalTargetChars };
+    return {
+      doneCount,
+      stagingCount,
+      totalCurrentChars,
+      totalTargetChars,
+      totalTargetPages,
+      totalCurrentPages,
+    };
   }, [sortedCards, scenes]);
 
   const allExpanded =
@@ -761,6 +777,40 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
                   </span>
                 </>
               )}
+              {(plotSummary.totalTargetPages > 0 || plotSummary.totalCurrentPages > 0) && (
+                <>
+                  <span aria-hidden="true" className="text-slate-300">
+                    ·
+                  </span>
+                  <span
+                    className="font-medium text-slate-700"
+                    title={
+                      getPageCountGuide(
+                        plotSummary.totalTargetPages || plotSummary.totalCurrentPages
+                      ).summary
+                    }
+                  >
+                    {plotSummary.totalCurrentPages > 0
+                      ? `漫画計 ${plotSummary.totalCurrentPages}P`
+                      : ''}
+                    {plotSummary.totalCurrentPages > 0 && plotSummary.totalTargetPages > 0
+                      ? ' / '
+                      : ''}
+                    {plotSummary.totalTargetPages > 0
+                      ? `想定 ${plotSummary.totalTargetPages}P`
+                      : ''}
+                    <span className="ml-1 font-normal text-slate-500">
+                      (
+                      {
+                        getPageCountGuide(
+                          plotSummary.totalTargetPages || plotSummary.totalCurrentPages
+                        ).summary
+                      }
+                      )
+                    </span>
+                  </span>
+                </>
+              )}
               {compact && plot.linkedSceneFolder && (
                 <span className="inline-flex items-center gap-0.5 rounded bg-slate-100 px-1.5 py-0 text-[10px] font-medium text-slate-600">
                   <Folder className="h-2.5 w-2.5 text-slate-400" />
@@ -939,6 +989,7 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
             card.foreshadowing,
             card.assetNotes,
             card.targetLength ? String(card.targetLength) : '',
+            card.targetPages ? String(card.targetPages) : '',
           ].filter((v) => Boolean(v && v.trim())).length;
 
           const currentSceneLength = linkedScene ? linkedScene.body.length : 0;
@@ -946,6 +997,14 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
           const progressPct =
             linkedScene && targetLength > 0
               ? Math.min(100, Math.round((currentSceneLength / targetLength) * 100))
+              : 0;
+
+          const currentScenePages =
+            linkedScene?.format === 'manga' ? parseMangaMarkdown(linkedScene.body).length : 0;
+          const targetPages = card.targetPages ?? 0;
+          const pageProgressPct =
+            linkedScene?.format === 'manga' && targetPages > 0
+              ? Math.min(100, Math.round((currentScenePages / targetPages) * 100))
               : 0;
 
           const keyTakeaways = [
@@ -986,33 +1045,68 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
               selectedCharacters.length > 0
           );
 
-          // Shared progress strip rendered whenever targetLength > 0
+          // Shared progress strip rendered whenever targetLength > 0 or targetPages > 0
           const renderProgressStrip = () => {
-            if (targetLength <= 0) return null;
+            if (targetLength <= 0 && targetPages <= 0) return null;
             return (
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-[10px] text-slate-500 tabular-nums">
-                  <span>
-                    {linkedScene ? '執筆ボリューム進捗' : '目標文字数（シーン未紐付け）'}
-                  </span>
-                  <span className="font-code font-medium text-slate-700">
-                    {linkedScene
-                      ? `${currentSceneLength.toLocaleString()} / ${targetLength.toLocaleString()}字 (${progressPct}%)`
-                      : `目標 ${targetLength.toLocaleString()}字`}
-                  </span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className={`h-full transition-all ${
-                      progressPct >= 100
-                        ? 'bg-emerald-600'
-                        : isAdult
-                          ? 'bg-rose-600'
-                          : 'bg-slate-700'
-                    }`}
-                    style={{ width: `${linkedScene ? progressPct : 0}%` }}
-                  />
-                </div>
+              <div className="space-y-2">
+                {targetPages > 0 && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 tabular-nums">
+                      <span>
+                        {linkedScene?.format === 'manga'
+                          ? 'マンガページ数進捗'
+                          : '想定ページ数（台割）'}
+                      </span>
+                      <span className="font-code font-medium text-slate-700">
+                        {linkedScene?.format === 'manga'
+                          ? `${currentScenePages}P / 目標 ${targetPages}P (${pageProgressPct}%)`
+                          : `想定 ${targetPages}P`}
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className={`h-full transition-all ${
+                          pageProgressPct >= 100
+                            ? 'bg-emerald-600'
+                            : isAdult
+                              ? 'bg-rose-600'
+                              : 'bg-slate-700'
+                        }`}
+                        style={{
+                          width: `${linkedScene?.format === 'manga' ? pageProgressPct : 0}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {targetLength > 0 && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 tabular-nums">
+                      <span>
+                        {linkedScene ? '執筆ボリューム進捗' : '目標文字数（シーン未紐付け）'}
+                      </span>
+                      <span className="font-code font-medium text-slate-700">
+                        {linkedScene
+                          ? `${currentSceneLength.toLocaleString()} / ${targetLength.toLocaleString()}字 (${progressPct}%)`
+                          : `目標 ${targetLength.toLocaleString()}字`}
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className={`h-full transition-all ${
+                          progressPct >= 100
+                            ? 'bg-emerald-600'
+                            : isAdult
+                              ? 'bg-rose-600'
+                              : 'bg-slate-700'
+                        }`}
+                        style={{ width: `${linkedScene ? progressPct : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             );
           };
@@ -1054,7 +1148,7 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
                 />
               </label>
 
-              <div className={`grid gap-2 ${compact ? 'grid-cols-1' : 'grid-cols-1 @lg:grid-cols-2'}`}>
+              <div className={`grid gap-2 ${compact ? 'grid-cols-1' : 'grid-cols-1 @lg:grid-cols-3'}`}>
                 <label className="block space-y-0.5">
                   <span className="text-[10px] font-medium text-slate-500">
                     分岐条件 / ルート
@@ -1090,6 +1184,30 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
                       className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 tabular-nums focus:border-slate-400 focus:outline-none"
                     />
                     <span className="text-[11px] text-slate-500 shrink-0">字</span>
+                  </div>
+                </label>
+
+                <label className="block space-y-0.5">
+                  <span className="text-[10px] font-medium text-slate-500">
+                    想定ページ数（マンガ）
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={card.targetPages ?? ''}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        updateCard(card.cardId, {
+                          targetPages:
+                            raw === '' ? undefined : Math.max(0, Math.floor(Number(raw))),
+                        });
+                      }}
+                      placeholder="4"
+                      className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 tabular-nums focus:border-slate-400 focus:outline-none"
+                    />
+                    <span className="text-[11px] text-slate-500 shrink-0">P</span>
                   </div>
                 </label>
               </div>
@@ -1158,7 +1276,9 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
               {linkedScene && (
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span className="font-code text-[10px] text-slate-400 tabular-nums">
-                    {currentSceneLength.toLocaleString()}字
+                    {linkedScene.format === 'manga'
+                      ? `${currentScenePages}P`
+                      : `${currentSceneLength.toLocaleString()}字`}
                   </span>
                   <button
                     type="button"
@@ -1423,6 +1543,13 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
                       >
                         {visMeta.shortLabel}
                       </span>
+                      {targetPages > 0 && (
+                        <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-code text-[10px] font-medium text-slate-600 tabular-nums">
+                          {linkedScene?.format === 'manga'
+                            ? `${currentScenePages}/${targetPages}P`
+                            : `想定${targetPages}P`}
+                        </span>
+                      )}
                     </div>
 
                     {renderCardActionButtons(true)}

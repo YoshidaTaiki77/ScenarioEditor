@@ -42,6 +42,11 @@ const TEMPLATE_OPTIONS: Array<{
     label: 'サンプルベース',
     description: '蓮・栞の設定例や分岐サンプルを残した状態で開始',
   },
+  {
+    value: 'manga',
+    label: 'マンガ制作（ページ・コマ脚本＆見開き台割）',
+    description: 'P1〜P4の見開きサンプル脚本・キャラ・世界観・台割プロット付きで開始',
+  },
 ];
 
 interface TemplateAndModeSelectorProps {

@@ -284,7 +284,7 @@ export const INITIAL_WORKSPACE: ScenarioWorkspace = {
   ],
 };
 
-export type ProjectTemplateType = 'minimal' | 'kishotenketsu' | 'sample';
+export type ProjectTemplateType = 'minimal' | 'kishotenketsu' | 'manga' | 'sample';
 
 export interface CreateWorkspaceOptions {
   title: string;
@@ -375,6 +375,129 @@ export function createWorkspaceFromTemplate({
         characters: [],
         body: '',
       })),
+    };
+  }
+
+  if (template === 'manga') {
+    const plotId = 'plot_ep01';
+    const sceneId = 'ep01_manga';
+    const sampleMangaBody = `## P1
+> 狙い: 導入の1ページ目（扉・単独左ページ）。夕暮れの図書室の空気感と2人の距離感を提示し、ページをめくりたくなる引きを作る。
+
+### コマ1
+- 構図: 放課後の旧校舎・図書室のロングショット。窓からオレンジ色の西日が長く差し込み、埃が舞っている。
+- セリフ[ナレーション]: 放課後の旧校舎図書室。チャイムが鳴って十分もすれば、ここはいつも二人だけの場所になる。
+- 擬音: キーンコーン…
+
+### コマ2
+- 構図: 高い書架を見上げて背伸びする栞の後ろ姿。ベージュのカーディガンが揺れる。
+- セリフ[通常] 栞: んっ……あと少しなのに……
+
+### コマ3
+- 構図: 栞の頭上からすっと伸びる蓮の手。本を軽々と抜き取るアップ。
+- セリフ[通常] 蓮: {{ren.callPartner}}、無理して落ちるなよ。
+
+## P2
+> 狙い: 見開き右ページ。2人の掛け合いとキャラクター性を軽快に見せる。
+
+### コマ1
+- 構図: 驚いて振り返る栞のバストアップ。頬がわずかに染まっている。
+- セリフ[通常] 栞: あ……{{shiori.callPartner}}！ ありがとうございます。
+- 擬音: びくっ
+
+### コマ2
+- 構図: 本を差し出しながら少し照れくさそうに視線を逸らす蓮。
+- セリフ[通常] 蓮: {{ren.firstPerson}}も丁度そこを通っただけだ。
+
+### コマ3
+- 構図: 本を受け取る栞の手元アップ。本の間から押し花の栞がひらりと落ちる。
+- 擬音: ひら…
+
+## P3
+> 狙い: 見開き左ページ（めくり）。落ちた押し花の栞をきっかけに距離が縮まる引きを作る。
+
+### コマ1
+- 構図: 床に落ちた押し花の栞を同時に拾おうとして、2人の指先が触れるアップ。
+- 擬音: っ…
+
+### コマ2
+- 構図: 目を見開いて固まる栞と、すぐ間近にある蓮の横顔。
+- セリフ[モノローグ] 栞: （近い……心臓の音、聞こえてないよね……？）
+
+### コマ3
+- 構図: 押し花の栞を拾い上げ、静かに栞へ目を向ける蓮のアップ（めくりの引き）。
+- セリフ[通常] 蓮: ……なあ、{{ren.callPartner}}。これ、前の約束のやつか？
+
+## P4
+> 狙い: 見開き右ページ。栞の返答で感情を揺らし、次の展開へ繋げる。
+
+### コマ1
+- 構図: 恥ずかしそうに俯きながらも、小さく微笑む栞の大ゴマ。西日が髪を縁取る。
+- セリフ[通常] 栞: はい……{{shiori.firstPerson}}、ずっと覚えてましたから。
+- セリフ[小文字] 栞: ……今度、一緒に読んでくれますか？
+
+### コマ2
+- 構図: 柔らかな表情を浮かべて頷く蓮。二人の間に温かい空気が流れる。
+- セリフ[通常] 蓮: もちろんだ。明日も放課後、ここで待ってる。`;
+
+    return {
+      project: {
+        title: cleanTitle,
+        activeMode,
+        defaultSceneFormat: 'manga',
+        chapters: [
+          {
+            chapterId: 'chapter_01',
+            title: '第1話',
+            plotId,
+            sceneIds: [sceneId],
+          },
+        ],
+        characterFolders: [],
+        worldFolders: [...DEFAULT_WORLD_FOLDERS],
+        sceneFolders: ['第1話'],
+      },
+      characters: cloneWorkspace(INITIAL_WORKSPACE).characters,
+      worldSettings: cloneWorkspace(INITIAL_WORKSPACE).worldSettings ?? [],
+      plots: [
+        {
+          plotId,
+          filename: 'plot_ep01.json',
+          chapterId: 'chapter_01',
+          scope: 'chapter',
+          linkedSceneFolder: '第1話',
+          title: '第1話 台割・構成プロット',
+          cards: [
+            {
+              cardId: 'card_ep01_01',
+              order: 1,
+              visibility: 'common',
+              title: '第1話 導入（P1〜P4）',
+              memo: '旧校舎図書室での放課後当番。押し花の栞をきっかけに二人の距離が少し縮まる。',
+              linkedSceneId: sceneId,
+              status: 'draft',
+              targetPages: 4,
+              characters: ['ren', 'shiori'],
+              location: '旧校舎の図書室',
+              timeOfDay: '放課後 / 夕方',
+            },
+          ],
+        },
+      ],
+      scenes: [
+        {
+          sceneId,
+          filename: 'ep01_manga.md',
+          folder: '第1話',
+          title: '第1話：放課後の境界線（ネーム脚本）',
+          visibility: 'common',
+          characters: ['ren', 'shiori'],
+          format: 'manga',
+          mangaBinding: 'rtl',
+          mangaStartPage: 1,
+          body: sampleMangaBody,
+        },
+      ],
     };
   }
 

@@ -12,7 +12,9 @@ import {
   Columns2,
   Eye,
   EyeOff,
+  FileText,
   Folder,
+  LayoutPanelTop,
   Maximize2,
   Minimize2,
   Users,
@@ -21,6 +23,7 @@ import type {
   ActiveMode,
   CharacterData,
   PlotData,
+  ProjectData,
   SceneData,
   VisibilityType,
   WorldSettingData,
@@ -29,7 +32,15 @@ import {
   compileSceneText,
   findPreviousSpeakerPrefix,
 } from '../utils/scenarioEngine';
+import {
+  parseMangaMarkdown,
+  serializeMangaMarkdown,
+} from '../utils/mangaEngine';
 import { PlotBoard, type MoveCardPosition } from './PlotBoard';
+import {
+  MangaScriptEditorPane,
+  type MangaScriptEditorHandle,
+} from './MangaScriptEditorPane';
 
 export interface SceneEditorHandle {
   jumpToLine: (line: number) => void;
@@ -37,6 +48,7 @@ export interface SceneEditorHandle {
 }
 
 interface SceneEditorPaneProps {
+  project: ProjectData;
   scene: SceneData;
   allScenes: SceneData[];
   sceneFolders: string[];
@@ -70,11 +82,13 @@ interface SceneEditorPaneProps {
   onSelectSplitPlot?: (plotId: string) => void;
   onOpenScene: (sceneId: string) => void;
   onCursorChange: (cursorIndex: number) => void;
+  onOpenMangaExport: (tab?: 'csp' | 'script') => void;
 }
 
 export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProps>(
   (
     {
+      project,
       scene,
       allScenes,
       sceneFolders,
@@ -99,10 +113,12 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
       onSelectSplitPlot,
       onOpenScene,
       onCursorChange,
+      onOpenMangaExport,
     },
     ref
   ) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const mangaEditorRef = useRef<MangaScriptEditorHandle>(null);
     const [showPreview, setShowPreview] = useState(true);
     const [showCharDropdown, setShowCharDropdown] = useState(false);
 
@@ -112,6 +128,7 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
     const [speakerInsertPos, setSpeakerInsertPos] = useState(0);
 
     const isAdult = activeMode === 'adult';
+    const isManga = scene.format === 'manga';
 
     // Participating characters ordered first, then others
     const orderedCharacters = useMemo(() => {
@@ -141,6 +158,10 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
 
     useImperativeHandle(ref, () => ({
       jumpToLine: (line: number) => {
+        if (isManga) {
+          mangaEditorRef.current?.jumpToLine(line);
+          return;
+        }
         const el = textareaRef.current;
         if (!el) return;
         const lines = scene.body.split('\n');
@@ -157,6 +178,10 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
         onCursorChange(offset);
       },
       insertAtCursor: (text: string, placeCaretBefore?: string) => {
+        if (isManga) {
+          mangaEditorRef.current?.insertAtCursor(text, placeCaretBefore);
+          return;
+        }
         const el = textareaRef.current;
         const start = el ? el.selectionStart : scene.body.length;
         const end = el ? el.selectionEnd : scene.body.length;
@@ -304,6 +329,29 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
       onUpdateScene({ ...scene, characters: next });
     };
 
+    const handleSwitchSceneFormat = (nextFormat: 'prose' | 'manga') => {
+      if (nextFormat === 'manga') {
+        if (scene.format === 'manga') return;
+        const hasMangaStructure = /^##\s+P\d+/m.test(scene.body);
+        const nextBody = hasMangaStructure
+          ? scene.body
+          : serializeMangaMarkdown(parseMangaMarkdown(scene.body));
+        onUpdateScene({
+          ...scene,
+          format: 'manga',
+          mangaBinding: scene.mangaBinding ?? 'rtl',
+          mangaStartPage: scene.mangaStartPage ?? 1,
+          body: nextBody,
+        });
+      } else {
+        if (scene.format !== 'manga') return;
+        onUpdateScene({
+          ...scene,
+          format: undefined,
+        });
+      }
+    };
+
     // Close speaker popup on scene switch
     useEffect(() => {
       setSpeakerPopupOpen(false);
@@ -404,7 +452,41 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
           </div>
 
           {/* Workspace View Toggles */}
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+            {/* Format Toggle: Prose <-> Manga Script */}
+            <div
+              role="group"
+              aria-label="シーン形式の切替"
+              className="flex items-center rounded border border-slate-200 bg-slate-100 p-0.5 shrink-0"
+            >
+              <button
+                type="button"
+                onClick={() => handleSwitchSceneFormat('prose')}
+                className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium transition-colors whitespace-nowrap ${
+                  !isManga
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <FileText className="h-3 w-3" />
+                <span>ノベル</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSwitchSceneFormat('manga')}
+                className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium transition-colors whitespace-nowrap ${
+                  isManga
+                    ? isAdult
+                      ? 'bg-rose-700 text-white shadow-2xs'
+                      : 'bg-slate-800 text-white shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <LayoutPanelTop className="h-3 w-3" />
+                <span>マンガ脚本</span>
+              </button>
+            </div>
+
             <button
               type="button"
               onClick={onToggleSplitView}
@@ -420,37 +502,41 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
               <span>2分割プロット</span>
             </button>
 
-            <button
-              type="button"
-              onClick={onToggleVerticalWriting}
-              className={`flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                verticalWriting
-                  ? isAdult
-                    ? 'border-rose-300 bg-rose-50 text-rose-800'
-                    : 'border-slate-300 bg-slate-100 text-slate-900'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              {verticalWriting ? (
-                <BookOpen className="h-3.5 w-3.5" />
-              ) : (
-                <AlignJustify className="h-3.5 w-3.5" />
-              )}
-              <span>{verticalWriting ? '縦書き' : '横書き'}</span>
-            </button>
+            {!isManga && (
+              <>
+                <button
+                  type="button"
+                  onClick={onToggleVerticalWriting}
+                  className={`flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                    verticalWriting
+                      ? isAdult
+                        ? 'border-rose-300 bg-rose-50 text-rose-800'
+                        : 'border-slate-300 bg-slate-100 text-slate-900'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {verticalWriting ? (
+                    <BookOpen className="h-3.5 w-3.5" />
+                  ) : (
+                    <AlignJustify className="h-3.5 w-3.5" />
+                  )}
+                  <span>{verticalWriting ? '縦書き' : '横書き'}</span>
+                </button>
 
-            <button
-              type="button"
-              onClick={() => setShowPreview((v) => !v)}
-              className="flex items-center gap-1 rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 whitespace-nowrap shrink-0"
-            >
-              {showPreview ? (
-                <Eye className="h-3.5 w-3.5" />
-              ) : (
-                <EyeOff className="h-3.5 w-3.5" />
-              )}
-              <span>プレビュー</span>
-            </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPreview((v) => !v)}
+                  className="flex items-center gap-1 rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 whitespace-nowrap shrink-0"
+                >
+                  {showPreview ? (
+                    <Eye className="h-3.5 w-3.5" />
+                  ) : (
+                    <EyeOff className="h-3.5 w-3.5" />
+                  )}
+                  <span>プレビュー</span>
+                </button>
+              </>
+            )}
 
             <button
               type="button"
@@ -497,7 +583,20 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
             </div>
           )}
 
-          {/* Editor + Live Preview Column */}
+          {isManga ? (
+            <MangaScriptEditorPane
+              ref={mangaEditorRef}
+              project={project}
+              scene={scene}
+              characters={characters}
+              worldSettings={worldSettings}
+              activeMode={activeMode}
+              onUpdateScene={onUpdateScene}
+              onCursorChange={onCursorChange}
+              onOpenMangaExport={onOpenMangaExport}
+            />
+          ) : (
+          /* Editor + Live Preview Column */
           <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
             {/* Typing Shortcut Hint Bar */}
             <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/70 px-3 @xl:px-4 py-1 text-[11px] text-slate-500">
@@ -636,6 +735,7 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
               </div>
             )}
           </div>
+          )}
         </div>
       </div>
     );

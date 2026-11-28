@@ -315,6 +315,17 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
       filename: getSceneFilename(s),
       folder: cleanFolder || undefined,
       characters: Array.isArray(s.characters) ? s.characters : [],
+      format: s.format === 'manga' ? ('manga' as const) : undefined,
+      mangaBinding:
+        s.mangaBinding === 'ltr'
+          ? ('ltr' as const)
+          : s.mangaBinding === 'rtl'
+            ? ('rtl' as const)
+            : undefined,
+      mangaStartPage:
+        typeof s.mangaStartPage === 'number' && Number.isFinite(s.mangaStartPage) && s.mangaStartPage >= 1
+          ? Math.floor(s.mangaStartPage)
+          : undefined,
     };
   });
 

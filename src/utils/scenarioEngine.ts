@@ -1,14 +1,17 @@
 import type {
   ActiveMode,
   CharacterData,
+  MangaBindingDirection,
   PlotData,
   ProofreadIssue,
   ProjectData,
   ResolvedCharacter,
   SceneData,
+  SceneFormat,
   VisibilityType,
   WorldSettingData,
 } from '../types/scenario';
+import { proofreadMangaScene } from './mangaEngine';
 
 const STANDARD_COMMON_KEYS = new Set([
   'name',
@@ -329,7 +332,8 @@ export function proofreadScene(
   rawText: string,
   characters: CharacterData[],
   mode: ActiveMode,
-  worldSettings: WorldSettingData[] = []
+  worldSettings: WorldSettingData[] = [],
+  sceneMeta?: SceneData
 ): ProofreadIssue[] {
   const issues: ProofreadIssue[] = [];
   const lines = rawText.split('\n');
@@ -630,16 +634,31 @@ export function proofreadScene(
     });
   }
 
+  if (sceneMeta?.format === 'manga') {
+    issues.push(...proofreadMangaScene(sceneMeta, characters, mode, worldSettings));
+  }
+
   return issues;
 }
 
 export function serializeSceneMarkdown(scene: SceneData): string {
   const charsList = scene.characters.join(', ');
+  const extraLines: string[] = [];
+  if (scene.format === 'manga') {
+    extraLines.push(`format: manga`);
+    if (scene.mangaBinding && scene.mangaBinding !== 'rtl') {
+      extraLines.push(`mangaBinding: ${scene.mangaBinding}`);
+    }
+    if (scene.mangaStartPage && scene.mangaStartPage > 1) {
+      extraLines.push(`mangaStartPage: ${scene.mangaStartPage}`);
+    }
+  }
+  const extraBlock = extraLines.length > 0 ? `\n${extraLines.join('\n')}` : '';
   return `---
 sceneId: ${scene.sceneId}
 title: ${scene.title}
 visibility: ${scene.visibility}
-characters: [${charsList}]
+characters: [${charsList}]${extraBlock}
 ---
 
 ${scene.body}
@@ -682,6 +701,15 @@ export function parseSceneMarkdown(filename: string, content: string): SceneData
     .map((s) => s.trim())
     .filter(Boolean);
 
+  const formatRaw = getField('format');
+  const format: SceneFormat | undefined = formatRaw === 'manga' ? 'manga' : undefined;
+  const bindingRaw = getField('mangaBinding');
+  const mangaBinding: MangaBindingDirection | undefined =
+    bindingRaw === 'ltr' || bindingRaw === 'rtl' ? bindingRaw : undefined;
+  const startPageRaw = Number(getField('mangaStartPage'));
+  const mangaStartPage =
+    Number.isFinite(startPageRaw) && startPageRaw >= 1 ? Math.floor(startPageRaw) : undefined;
+
   return {
     sceneId,
     filename,
@@ -689,6 +717,9 @@ export function parseSceneMarkdown(filename: string, content: string): SceneData
     visibility,
     characters,
     body,
+    ...(format ? { format } : {}),
+    ...(mangaBinding ? { mangaBinding } : {}),
+    ...(mangaStartPage ? { mangaStartPage } : {}),
   };
 }
 

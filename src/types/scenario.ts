@@ -159,6 +159,7 @@ export interface PlotCard {
   // 進捗管理・ボリューム感
   status?: PlotCardStatus;
   targetLength?: number;
+  targetPages?: number;
   assetNotes?: string;
   // タイムラインチャート（フリーキャンバス）用メタデータ
   chartPos?: PlotCardPosition;
@@ -178,6 +179,40 @@ export interface PlotData {
   cards: PlotCard[];
 }
 
+export type SceneFormat = 'prose' | 'manga';
+
+export type MangaBindingDirection = 'rtl' | 'ltr';
+
+export type MangaSpeechType = 'dialogue' | 'monologue' | 'narration' | 'shout' | 'whisper';
+
+export interface MangaSpeech {
+  id: string;
+  speaker: string;
+  type: MangaSpeechType;
+  text: string;
+}
+
+export interface MangaPanel {
+  id: string;
+  visual: string;
+  speeches: MangaSpeech[];
+  sfx: string;
+}
+
+export interface MangaPage {
+  id: string;
+  note: string;
+  panels: MangaPanel[];
+}
+
+export interface MangaExportOptions {
+  includeMonologue: boolean;
+  includeNarration: boolean;
+  includeSfx: boolean;
+  includeSpeakerComment: boolean;
+  pageSeparator: 'double_blank' | 'page_header';
+}
+
 export interface SceneData {
   sceneId: string;
   filename: string;
@@ -186,6 +221,9 @@ export interface SceneData {
   visibility: VisibilityType;
   characters: string[];
   body: string;
+  format?: SceneFormat;
+  mangaBinding?: MangaBindingDirection;
+  mangaStartPage?: number;
 }
 
 export interface ChapterConfig {
@@ -221,6 +259,7 @@ export interface WorldSettingData {
 export interface ProjectData {
   title: string;
   activeMode: ActiveMode;
+  defaultSceneFormat?: SceneFormat;
   chapters: ChapterConfig[];
   characterFolders?: string[];
   worldFolders?: string[];
@@ -254,7 +293,7 @@ export interface ProofreadIssue {
   line: number;
   column: number;
   severity: 'warning' | 'error';
-  category: 'firstPerson' | 'brackets' | 'syntax';
+  category: 'firstPerson' | 'brackets' | 'syntax' | 'manga';
   message: string;
   snippet: string;
 }

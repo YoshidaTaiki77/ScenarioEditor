@@ -165,7 +165,7 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
   // Real-time zero-AI proofreading
   const issues: ProofreadIssue[] = useMemo(() => {
     if (!scene) return [];
-    return proofreadScene(scene.body, characters, activeMode, worldSettings);
+    return proofreadScene(scene.body, characters, activeMode, worldSettings, scene);
   }, [scene, characters, activeMode, worldSettings]);
 
   const quickTemplates = useMemo(() => {
@@ -1188,7 +1188,9 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                   検出された問題はありません
                 </p>
                 <p className="mt-0.5 text-[11px] text-emerald-700">
-                  一人称の一貫性とカギ括弧「」の整合性が取れています。
+                  {scene.format === 'manga'
+                    ? '一人称・括弧の整合性と、コマ数・セリフ文字数のバランスが取れています。'
+                    : '一人称の一貫性とカギ括弧「」の整合性が取れています。'}
                 </p>
               </div>
             ) : (
@@ -1208,7 +1210,9 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                             ? '一人称の不整合'
                             : issue.category === 'brackets'
                               ? '括弧の閉じ忘れ'
-                              : '記法エラー'}
+                              : issue.category === 'manga'
+                                ? 'コマ・字数バランス'
+                                : '記法エラー'}
                         </span>
                       </span>
                       <span className="font-code text-slate-500 tabular-nums">

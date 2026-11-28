@@ -478,6 +478,11 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
           <div className="min-w-0 flex-1">
             <div className="truncate leading-snug">{scene.title}</div>
             <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+              {scene.format === 'manga' && (
+                <span className="shrink-0 rounded bg-slate-200/80 px-1 py-0 text-[9px] font-semibold text-slate-700">
+                  漫画
+                </span>
+              )}
               <span className="font-code truncate">{getSceneFilename(scene)}</span>
               <span aria-hidden="true">·</span>
               <span

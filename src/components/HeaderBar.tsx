@@ -34,6 +34,9 @@ interface HeaderBarProps {
   onExportCurrentScene: () => void;
   onExportAllScenes: () => void;
   hasActiveScene: boolean;
+  hasMangaScenes: boolean;
+  isActiveMangaScene: boolean;
+  onOpenMangaExport: (tab: 'csp' | 'script', scope: 'current' | 'all') => void;
   historyCount: number;
   onOpenHistory: () => void;
   leftPaneOpen: boolean;
@@ -58,6 +61,9 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onExportCurrentScene,
   onExportAllScenes,
   hasActiveScene,
+  hasMangaScenes,
+  isActiveMangaScene,
+  onOpenMangaExport,
   historyCount,
   onOpenHistory,
   leftPaneOpen,
@@ -445,6 +451,39 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               {isAdult ? '_r18.txt' : '_normal.txt'}
             </span>
           </button>
+
+          {hasMangaScenes && (
+            <>
+              <div className="my-1 border-t border-slate-100" />
+              <div className="px-3 py-1 text-[10px] font-medium text-slate-400">
+                マンガ脚本・写植書き出し
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenMangaExport('csp', isActiveMangaScene ? 'current' : 'all');
+                  setExportOpen(false);
+                }}
+                className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+              >
+                <span>クリスタ写植用テキスト</span>
+                <span className="font-code text-[11px] text-slate-400">
+                  {isAdult ? '_csp_r18.txt' : '_csp_normal.txt'}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenMangaExport('script', isActiveMangaScene ? 'current' : 'all');
+                  setExportOpen(false);
+                }}
+                className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+              >
+                <span>作画・ネーム共有用脚本</span>
+                <span className="font-code text-[11px] text-slate-400">.txt / .md</span>
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
