@@ -386,10 +386,16 @@ async function importCharacterFiles(
       if (!rawTarget) continue;
       const mappedTarget = batchIdRemap.get(rawTarget) ?? rawTarget;
       if (mappedTarget === entry.newId || !allValidCharIds.has(mappedTarget)) continue;
+      const enableAdultOverride = Boolean(relObj.enableAdultOverride);
+      const adultCallPartner = getStringField(relObj, 'adultCallPartner');
+      const adultRelationship = getStringField(relObj, 'adultRelationship');
       relations.push({
         targetCharacterId: mappedTarget,
         callPartner: getStringField(relObj, 'callPartner'),
         relationship: getStringField(relObj, 'relationship'),
+        ...(enableAdultOverride ? { enableAdultOverride: true } : {}),
+        ...(adultCallPartner ? { adultCallPartner } : {}),
+        ...(adultRelationship ? { adultRelationship } : {}),
       });
     }
 

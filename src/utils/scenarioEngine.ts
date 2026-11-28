@@ -123,11 +123,28 @@ export function resolveCharacterProfile(
       };
     });
 
-  const relations = (char.relations ?? []).map((rel) => ({
-    targetCharacterId: rel.targetCharacterId,
-    callPartner: rel.callPartner ?? '',
-    relationship: rel.relationship ?? '',
-  }));
+  const relations = (char.relations ?? []).map((rel) => {
+    const baseCall = rel.callPartner ?? '';
+    const baseRel = rel.relationship ?? '';
+    const useAdult = mode === 'adult' && Boolean(rel.enableAdultOverride);
+    const resolvedCall =
+      useAdult && typeof rel.adultCallPartner === 'string' && rel.adultCallPartner.trim() !== ''
+        ? rel.adultCallPartner
+        : baseCall;
+    const resolvedRel =
+      useAdult && typeof rel.adultRelationship === 'string' && rel.adultRelationship.trim() !== ''
+        ? rel.adultRelationship
+        : baseRel;
+    const isAdultOverridden =
+      useAdult && (resolvedCall !== baseCall || resolvedRel !== baseRel);
+
+    return {
+      targetCharacterId: rel.targetCharacterId,
+      callPartner: resolvedCall,
+      relationship: resolvedRel,
+      isAdultOverridden,
+    };
+  });
 
   const allFields: Record<string, string> = { ...baseFields };
   for (const ef of extraCommonFields) {

@@ -128,8 +128,6 @@ const STANDARD_OPTIONAL_FIELDS: StandardOptionalFieldMeta[] = [
   { key: 'gender', defaultLabel: '性別', placeholder: '例: 女性 / 男性 / 不明' },
   { key: 'secondPerson', defaultLabel: '二人称' },
   { key: 'speechStyle', defaultLabel: '口調', multiline: true },
-  { key: 'callPartner', defaultLabel: '相手の呼び方（基本）' },
-  { key: 'relationship', defaultLabel: '関係性（基本）' },
   { key: 'height', defaultLabel: '身長', placeholder: '例: 158cm' },
   { key: 'weight', defaultLabel: '体重', placeholder: '例: 45kg' },
   {
@@ -420,7 +418,16 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
 
   const handleUpdateRelation = (
     targetCharacterId: string,
-    patch: Partial<Pick<CharacterRelation, 'callPartner' | 'relationship'>>
+    patch: Partial<
+      Pick<
+        CharacterRelation,
+        | 'callPartner'
+        | 'relationship'
+        | 'enableAdultOverride'
+        | 'adultCallPartner'
+        | 'adultRelationship'
+      >
+    >
   ) => {
     const nextRelations = relations.map((rel) =>
       rel.targetCharacterId === targetCharacterId ? { ...rel, ...patch } : rel
@@ -482,7 +489,7 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
   }, [customCharacterCategories, defaultCustomCommonFields, allCharacters]);
 
   // Add dual-profile field state
-  const [selectedDualAddKey, setSelectedDualAddKey] = useState<string>('callPartner');
+  const [selectedDualAddKey, setSelectedDualAddKey] = useState<string>('speechStyle');
   const [customDualLabel, setCustomDualLabel] = useState('');
   const [customDualKey, setCustomDualKey] = useState('');
   const [customDualMultiline, setCustomDualMultiline] = useState(false);
@@ -1421,13 +1428,16 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
                     対人・呼び方・関係性
                   </h4>
 
-                  <div className="grid grid-cols-1 @xl:grid-cols-2 gap-4">
-                    {renderStandardField('callPartner')}
-                    {renderStandardField('relationship')}
-                    {getStandardCategoryCustomFields('対人・呼び方・関係性').map(
-                      renderCustomCommonField
-                    )}
-                  </div>
+                  {(() => {
+                    const interpersonalCustomFields =
+                      getStandardCategoryCustomFields('対人・呼び方・関係性');
+                    if (interpersonalCustomFields.length === 0) return null;
+                    return (
+                      <div className="grid grid-cols-1 @xl:grid-cols-2 gap-4">
+                        {interpersonalCustomFields.map(renderCustomCommonField)}
+                      </div>
+                    );
+                  })()}
 
                   {/* Per-Character Calling Name & Relationship Settings */}
                   <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
@@ -1443,7 +1453,7 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
                           </span>
                         </div>
                         <p className="mt-0.5 text-[11px] text-slate-500">
-                          登録済みキャラクターごとに個別の呼び方・関係性を設定できます（本文変数{' '}
+                          登録済みキャラクターごとに個別の呼び方・関係性（およびR18時の差分）を設定できます（本文変数{' '}
                           <code className="rounded bg-slate-100 px-1 py-0.5 font-code text-[10px] text-slate-700">
                             {`{{${character.id}.callPartner.相手ID}}`}
                           </code>{' '}
@@ -1518,6 +1528,7 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
                                   ? `${target.folder} · ${target.id}`
                                   : target.id
                                 : rel.targetCharacterId;
+                              const hasAdultOverride = Boolean(rel.enableAdultOverride);
 
                               return (
                                 <div
@@ -1536,6 +1547,11 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
                                       <span className="font-code text-[10px] text-slate-400">
                                         ({targetSub})
                                       </span>
+                                      {hasAdultOverride && (
+                                        <span className="rounded border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-700">
+                                          R18差分あり
+                                        </span>
+                                      )}
                                     </div>
 
                                     <div className="flex items-center gap-2 shrink-0">
@@ -1587,6 +1603,69 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
                                         className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none"
                                       />
                                     </label>
+                                  </div>
+
+                                  {/* R18 Mode Override Toggle & Inputs */}
+                                  <div className="border-t border-slate-200/70 pt-2">
+                                    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] font-medium text-slate-600 hover:text-slate-900">
+                                      <input
+                                        type="checkbox"
+                                        checked={hasAdultOverride}
+                                        onChange={(e) =>
+                                          handleUpdateRelation(rel.targetCharacterId, {
+                                            enableAdultOverride: e.target.checked,
+                                          })
+                                        }
+                                        className="h-3.5 w-3.5 rounded border-slate-300 accent-rose-600"
+                                      />
+                                      <span>R18モードで呼び方・関係性を変える</span>
+                                    </label>
+
+                                    {hasAdultOverride && (
+                                      <div className="mt-2 grid grid-cols-1 @xl:grid-cols-2 gap-3 rounded-md border border-rose-200/80 bg-rose-50/50 p-2.5">
+                                        <label className="block space-y-1">
+                                          <span className="text-[11px] font-medium text-rose-800">
+                                            R18時の相手の呼び方
+                                          </span>
+                                          <input
+                                            type="text"
+                                            value={rel.adultCallPartner ?? ''}
+                                            onChange={(e) =>
+                                              handleUpdateRelation(rel.targetCharacterId, {
+                                                adultCallPartner: e.target.value,
+                                              })
+                                            }
+                                            placeholder={
+                                              rel.callPartner
+                                                ? `未入力時は一般用「${rel.callPartner}」を使用`
+                                                : '例: 蓮くん / 栞'
+                                            }
+                                            className="w-full rounded-md border border-rose-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-rose-400 focus:outline-none"
+                                          />
+                                        </label>
+
+                                        <label className="block space-y-1">
+                                          <span className="text-[11px] font-medium text-rose-800">
+                                            R18時の関係性
+                                          </span>
+                                          <input
+                                            type="text"
+                                            value={rel.adultRelationship ?? ''}
+                                            onChange={(e) =>
+                                              handleUpdateRelation(rel.targetCharacterId, {
+                                                adultRelationship: e.target.value,
+                                              })
+                                            }
+                                            placeholder={
+                                              rel.relationship
+                                                ? `未入力時は一般用「${rel.relationship}」を使用`
+                                                : '例: ふたりきりの恋人'
+                                            }
+                                            className="w-full rounded-md border border-rose-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-rose-400 focus:outline-none"
+                                          />
+                                        </label>
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                               );

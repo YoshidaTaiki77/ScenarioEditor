@@ -25,8 +25,8 @@ export const INITIAL_WORKSPACE: ScenarioWorkspace = {
         firstPerson: '俺',
         ageDisplay: '高校二年生（17歳）',
         gender: '男性',
-        relationship: '同じ図書委員の同級生',
-        callPartner: '相沢さん',
+        relationship: '',
+        callPartner: '',
         secondPerson: '君',
         speechStyle: '落ち着いた常体。少しぶっきらぼうだが誠実。',
         costume: '濃紺の冬服ブレザー',
@@ -36,6 +36,16 @@ export const INITIAL_WORKSPACE: ScenarioWorkspace = {
         bodyType: '細身・引き締まった体格',
         hobbies: '古書店巡り・ブラック珈琲を淹れること・深夜の読書',
       },
+      relations: [
+        {
+          targetCharacterId: 'shiori',
+          callPartner: '相沢さん',
+          relationship: '同じ図書委員の同級生',
+          enableAdultOverride: true,
+          adultCallPartner: '栞',
+          adultRelationship: 'ふたりだけの秘密を共有する恋人',
+        },
+      ],
       dualFields: [],
       profiles: {
         general: {},
@@ -53,8 +63,8 @@ export const INITIAL_WORKSPACE: ScenarioWorkspace = {
         firstPerson: '私',
         ageDisplay: '高校二年生（17歳）',
         gender: '女性',
-        relationship: '蓮と放課後の当番を組む図書委員',
-        callPartner: '結城くん',
+        relationship: '',
+        callPartner: '',
         secondPerson: 'あなた',
         speechStyle: '丁寧・やや控えめ（です・ます調）。照れると語尾が小さくなる。',
         costume: 'ベージュの制服カーディガン',
@@ -64,6 +74,16 @@ export const INITIAL_WORKSPACE: ScenarioWorkspace = {
         bodyType: '華奢・B82 / W56 / H83',
         hobbies: '押し花の栞作り・紅茶・雨の日の窓際で長編小説を読むこと',
       },
+      relations: [
+        {
+          targetCharacterId: 'ren',
+          callPartner: '結城くん',
+          relationship: '蓮と放課後の当番を組む図書委員',
+          enableAdultOverride: true,
+          adultCallPartner: '蓮くん',
+          adultRelationship: 'ふたりきりの恋人',
+        },
+      ],
       dualFields: [],
       profiles: {
         general: {},
@@ -231,17 +251,17 @@ export const INITIAL_WORKSPACE: ScenarioWorkspace = {
 閉館後の資料室に鍵を掛け、ふたりきりになった静寂が甘く肌を撫でる。
 [/IF_MODE]
 
-栞「あの、{{shiori.callPartner}}。高い棚の整理、手伝ってくれてありがとうございます」
-蓮「気にするな、{{shiori.callPartner}}……いや、{{ren.callPartner}}の背丈じゃ届かないだろ」
+栞「あの、{{shiori.callPartner.ren}}。高い棚の整理、手伝ってくれてありがとうございます」
+蓮「気にするな、{{ren.callPartner.shiori}}……いや、お前の背丈じゃ届かないだろ」
 栞「むぅ……{{shiori.firstPerson}}だって、踏み台があれば届きます」
 
 [IF_MODE: general]
 そう言いながらも、{{shiori.name}}は少しだけ頬を染めて、抱えていたハードカバーを胸に寄せた。
-栞「でも、こうして{{shiori.callPartner}}と二人で閉め作業をするの、なんだか落ち着きますね」
+栞「でも、こうして{{shiori.callPartner.ren}}と二人で閉め作業をするの、なんだか落ち着きますね」
 [/IF_MODE]
 [IF_MODE: adult]
 踏み台を降りた{{shiori.name}}の袖口を、{{ren.firstPerson}}は思わず軽く引き寄せていた。
-栞「っ……{{shiori.callPartner}}？　だめですよ、まだ窓の外が明るいのに……」
+栞「っ……{{shiori.callPartner.ren}}？　だめですよ、まだ窓の外が明るいのに……」
 蓮「誰も見てない。お前の声が聞こえる距離にいたいだけだ」
 [/IF_MODE]`,
     },
@@ -254,9 +274,9 @@ export const INITIAL_WORKSPACE: ScenarioWorkspace = {
       body: `チャイムが鳴り終わり、校舎の隅に澄んだ夜気の前触れが漂い始める。
 衣装は{{shiori.costume}}のまま、{{shiori.name}}は鞄から小さな押し花の栞を取り出した。
 
-栞「{{shiori.callPartner}}、これ。さっきの本に挟まってた忘れ物……じゃなくて、{{shiori.firstPerson}}からの御礼です」
+栞「{{shiori.callPartner.ren}}、これ。さっきの本に挟まってた忘れ物……じゃなくて、{{shiori.firstPerson}}からの御礼です」
 蓮「いいのか？　ずいぶん大事にしてたやつだろ」
-栞「はい。{{shiori.callPartner}}が続きを読んでくれるなら、その方が嬉しいです」
+栞「はい。{{shiori.callPartner.ren}}が続きを読んでくれるなら、その方が嬉しいです」
 
 風の音に紛れて、彼女の言葉はやけに真っ直ぐ{{ren.firstPerson}}の胸に届いた。`,
     },
@@ -268,17 +288,17 @@ export const INITIAL_WORKSPACE: ScenarioWorkspace = {
       characters: ['ren', 'shiori'],
       body: `[R18_BLOCK_START: 導入〜接触]
 部屋の明かりを間接照明だけに落とすと、{{shiori.costume}}越しの肩のラインが柔らかく浮かび上がる。
-年齢も立場も関係ない夜。今のふたりはただの{{shiori.relationship}}だ。
+年齢も立場も関係ない夜。今のふたりはただの{{shiori.relationship.ren}}だ。
 
-栞「……{{shiori.callPartner}}、こっちに来て。今夜は、どこにも行かないで」
-蓮「ああ。{{ren.callPartner}}が望むなら、朝まで離さない」
+栞「……{{shiori.callPartner.ren}}、こっちに来て。今夜は、どこにも行かないで」
+蓮「ああ。{{ren.callPartner.shiori}}が望むなら、朝まで離さない」
 栞「ん……っ、指先が冷たいのに、触られるとすごく熱い……あたしも、もっと触れたいよ」
 [R18_BLOCK_END]
 
 [R18_BLOCK_START: 絶頂〜余韻]
 シーツの擦れる音と、途切れがちな吐息だけが暗い部屋を満たしていく。
-栞「{{shiori.callPartner}}……{{shiori.firstPerson}}の名前、もう一回呼んで……」
-蓮「……{{ren.callPartner}}」
+栞「{{shiori.callPartner.ren}}……{{shiori.firstPerson}}の名前、もう一回呼んで……」
+蓮「……{{ren.callPartner.shiori}}」
 [R18_BLOCK_END]`,
     },
   ],
@@ -395,14 +415,14 @@ export function createWorkspaceFromTemplate({
 
 ### コマ3
 - 構図: 栞の頭上からすっと伸びる蓮の手。本を軽々と抜き取るアップ。
-- セリフ[通常] 蓮: {{ren.callPartner}}、無理して落ちるなよ。
+- セリフ[通常] 蓮: {{ren.callPartner.shiori}}、無理して落ちるなよ。
 
 ## P2
 > 狙い: 見開き右ページ。2人の掛け合いとキャラクター性を軽快に見せる。
 
 ### コマ1
 - 構図: 驚いて振り返る栞のバストアップ。頬がわずかに染まっている。
-- セリフ[通常] 栞: あ……{{shiori.callPartner}}！ ありがとうございます。
+- セリフ[通常] 栞: あ……{{shiori.callPartner.ren}}！ ありがとうございます。
 - 擬音: びくっ
 
 ### コマ2
@@ -426,7 +446,7 @@ export function createWorkspaceFromTemplate({
 
 ### コマ3
 - 構図: 押し花の栞を拾い上げ、静かに栞へ目を向ける蓮のアップ（めくりの引き）。
-- セリフ[通常] 蓮: ……なあ、{{ren.callPartner}}。これ、前の約束のやつか？
+- セリフ[通常] 蓮: ……なあ、{{ren.callPartner.shiori}}。これ、前の約束のやつか？
 
 ## P4
 > 狙い: 見開き右ページ。栞の返答で感情を揺らし、次の展開へ繋げる。

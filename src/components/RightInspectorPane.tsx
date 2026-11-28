@@ -286,13 +286,6 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
       locked: boolean;
     }> = [
       {
-        key: 'callPartner',
-        label: '相手の呼び方',
-        notation: `{{${resolvedChar.id}.callPartner}}`,
-        value: resolvedChar.callPartner,
-        locked: lockedSet.has('callPartner'),
-      },
-      {
         key: 'firstPerson',
         label: '一人称',
         notation: `{{${resolvedChar.id}.firstPerson}}`,
@@ -333,7 +326,6 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
       { key: 'ruby', label: 'ルビ' },
       { key: 'ageDisplay', label: '年齢表記' },
       { key: 'gender', label: '性別' },
-      { key: 'relationship', label: '関係性' },
       { key: 'height', label: '身長' },
       { key: 'weight', label: '体重' },
       { key: 'bodyType', label: '体型 / 3サイズ' },
@@ -914,11 +906,13 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                         {resolvedChar.ruby}
                       </span>
                     </div>
-                    <div className="text-[11px] text-slate-500">
-                      {[resolvedChar.gender, resolvedChar.ageDisplay, resolvedChar.relationship]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </div>
+                    {(resolvedChar.gender || resolvedChar.ageDisplay) && (
+                      <div className="text-[11px] text-slate-500">
+                        {[resolvedChar.gender, resolvedChar.ageDisplay]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </div>
+                    )}
                   </div>
 
                   {visibleCharImages.length > 0 && (() => {
@@ -1048,7 +1042,6 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                     {(
                       [
                         ['一人称', resolvedChar.firstPerson, 'firstPerson'],
-                        ['相手の呼び方', resolvedChar.callPartner, 'callPartner'],
                         ['二人称', resolvedChar.secondPerson, 'secondPerson'],
                         ['衣装', resolvedChar.costume, 'costume'],
                       ] as const
@@ -1086,21 +1079,34 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
 
                   {resolvedChar.relations.length > 0 && (
                     <div className="space-y-1.5 border-t border-slate-100 pt-2">
-                      <div className="text-[11px] font-medium text-slate-500">
-                        他キャラへの呼び方・関係性
+                      <div className="flex items-center justify-between text-[11px] font-medium text-slate-500">
+                        <span>他キャラへの呼び方・関係性</span>
+                        <span className="text-[10px] font-normal text-slate-400">挿入 / コピー</span>
                       </div>
                       <div className="space-y-1.5">
                         {resolvedChar.relations.map((rel) => {
                           const target = characters.find((c) => c.id === rel.targetCharacterId);
                           const targetLabel =
                             target?.common.name ?? `未登録 (${rel.targetCharacterId})`;
+                          const callNotation = `{{${resolvedChar.id}.callPartner.${rel.targetCharacterId}}}`;
+                          const relNotation = `{{${resolvedChar.id}.relationship.${rel.targetCharacterId}}}`;
+                          const callCopyKey = `rel-card-call:${resolvedChar.id}:${rel.targetCharacterId}`;
+                          const relCopyKey = `rel-card-rel:${resolvedChar.id}:${rel.targetCharacterId}`;
+
                           return (
                             <div
                               key={rel.targetCharacterId}
-                              className="rounded bg-slate-50 px-2 py-1.5 space-y-0.5"
+                              className="rounded border border-slate-200/70 bg-slate-50 px-2 py-1.5 space-y-1.5"
                             >
                               <div className="flex items-center justify-between gap-2 text-xs">
-                                <span className="text-slate-500 truncate">→ {targetLabel}</span>
+                                <span className="flex min-w-0 items-center gap-1 text-slate-500 truncate">
+                                  <span className="truncate">→ {targetLabel}</span>
+                                  {rel.isAdultOverridden && (
+                                    <span className="shrink-0 rounded bg-rose-100 px-1 py-0.2 text-[9px] font-semibold text-rose-700">
+                                      R18
+                                    </span>
+                                  )}
+                                </span>
                                 <span className="font-medium text-slate-900 truncate">
                                   {rel.callPartner || '—'}
                                 </span>
@@ -1110,6 +1116,76 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                                   {rel.relationship}
                                 </p>
                               )}
+
+                              <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                                <div className="flex flex-1 min-w-0 items-stretch gap-0.5">
+                                  <button
+                                    type="button"
+                                    disabled={!scene}
+                                    onClick={() => onInsertSnippet(callNotation)}
+                                    title={
+                                      scene
+                                        ? `${callNotation} を本文へ挿入`
+                                        : 'シーン編集中に本文へ挿入できます'
+                                    }
+                                    className={`inline-flex flex-1 min-w-0 items-center justify-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-45 ${
+                                      isAdult
+                                        ? 'border-rose-200 bg-white text-rose-800 hover:bg-rose-50'
+                                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                                    }`}
+                                  >
+                                    <CornerDownLeft className="h-2.5 w-2.5 shrink-0" />
+                                    <span className="truncate">呼び方を挿入</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => copyVariableNotation(callCopyKey, callNotation)}
+                                    title={`${callNotation} をコピー`}
+                                    className="inline-flex shrink-0 items-center justify-center rounded border border-slate-200 bg-white px-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+                                  >
+                                    {copiedVarKey === callCopyKey ? (
+                                      <Check className="h-3 w-3 text-emerald-600" />
+                                    ) : (
+                                      <Copy className="h-3 w-3" />
+                                    )}
+                                  </button>
+                                </div>
+
+                                {rel.relationship && (
+                                  <div className="flex flex-1 min-w-0 items-stretch gap-0.5">
+                                    <button
+                                      type="button"
+                                      disabled={!scene}
+                                      onClick={() => onInsertSnippet(relNotation)}
+                                      title={
+                                        scene
+                                          ? `${relNotation} を本文へ挿入`
+                                          : 'シーン編集中に本文へ挿入できます'
+                                      }
+                                      className={`inline-flex flex-1 min-w-0 items-center justify-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-45 ${
+                                        isAdult
+                                          ? 'border-rose-200 bg-white text-rose-800 hover:bg-rose-50'
+                                          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                                      }`}
+                                    >
+                                      <CornerDownLeft className="h-2.5 w-2.5 shrink-0" />
+                                      <span className="truncate">関係性を挿入</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => copyVariableNotation(relCopyKey, relNotation)}
+                                      title={`${relNotation} をコピー`}
+                                      className="inline-flex shrink-0 items-center justify-center rounded border border-slate-200 bg-white px-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+                                    >
+                                      {copiedVarKey === relCopyKey ? (
+                                        <Check className="h-3 w-3 text-emerald-600" />
+                                      ) : (
+                                        <Copy className="h-3 w-3" />
+                                      )}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           );
                         })}

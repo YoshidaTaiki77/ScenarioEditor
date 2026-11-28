@@ -31,6 +31,16 @@ export interface CharacterRelation {
   targetCharacterId: string;
   callPartner: string;
   relationship: string;
+  enableAdultOverride?: boolean;
+  adultCallPartner?: string;
+  adultRelationship?: string;
+}
+
+export interface ResolvedCharacterRelation {
+  targetCharacterId: string;
+  callPartner: string;
+  relationship: string;
+  isAdultOverridden?: boolean;
 }
 
 export const STANDARD_CHARACTER_CATEGORIES = [
@@ -132,7 +142,7 @@ export interface ResolvedCharacter {
   secondPerson: string;
   speechStyle: string;
   costume: string;
-  relations: CharacterRelation[];
+  relations: ResolvedCharacterRelation[];
   hiddenCommonFields: string[];
   extraCommonFields: Array<{ key: string; label: string; value: string; category?: string }>;
   customFields: Array<{ key: string; label: string; value: string; locked: boolean }>;

@@ -217,6 +217,13 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
           targetCharacterId: tid,
           callPartner: typeof rel.callPartner === 'string' ? rel.callPartner : '',
           relationship: typeof rel.relationship === 'string' ? rel.relationship : '',
+          ...(rel.enableAdultOverride ? { enableAdultOverride: true } : {}),
+          ...(typeof rel.adultCallPartner === 'string' && rel.adultCallPartner !== ''
+            ? { adultCallPartner: rel.adultCallPartner }
+            : {}),
+          ...(typeof rel.adultRelationship === 'string' && rel.adultRelationship !== ''
+            ? { adultRelationship: rel.adultRelationship }
+            : {}),
         });
       }
     }
@@ -253,10 +260,8 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
         ...c.common,
         ageDisplay: c.common?.ageDisplay ?? gen.ageDisplay ?? seed?.common.ageDisplay ?? '',
         gender: c.common?.gender ?? gen.gender ?? seed?.common.gender ?? '',
-        relationship:
-          c.common?.relationship ?? gen.relationship ?? seed?.common.relationship ?? '',
-        callPartner:
-          c.common?.callPartner ?? gen.callPartner ?? seed?.common.callPartner ?? '',
+        relationship: c.common?.relationship ?? gen.relationship ?? '',
+        callPartner: c.common?.callPartner ?? gen.callPartner ?? '',
         secondPerson:
           c.common?.secondPerson ?? gen.secondPerson ?? seed?.common.secondPerson ?? '',
         speechStyle:
