@@ -119,6 +119,7 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
   ) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const mangaEditorRef = useRef<MangaScriptEditorHandle>(null);
+    const charDropdownRef = useRef<HTMLDivElement>(null);
     const [showPreview, setShowPreview] = useState(true);
     const [showCharDropdown, setShowCharDropdown] = useState(false);
 
@@ -352,211 +353,245 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
       }
     };
 
-    // Close speaker popup on scene switch
+    // Close popups on scene switch
     useEffect(() => {
       setSpeakerPopupOpen(false);
+      setShowCharDropdown(false);
     }, [scene.sceneId]);
+
+    // Close character dropdown on outside click
+    useEffect(() => {
+      if (!showCharDropdown) return;
+      const handleClickOutside = (e: MouseEvent) => {
+        if (charDropdownRef.current && !charDropdownRef.current.contains(e.target as Node)) {
+          setShowCharDropdown(false);
+        }
+      };
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [showCharDropdown]);
 
     return (
       <div className="flex h-full min-w-0 flex-1 flex-col bg-white">
-        {/* Scene Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-2">
-          <div className="flex min-w-0 flex-1 items-center gap-2.5">
-            <input
-              type="text"
-              value={scene.title}
-              onChange={(e) => onUpdateScene({ ...scene, title: e.target.value })}
-              className="min-w-[140px] max-w-[260px] rounded border border-transparent px-1.5 py-1 text-sm font-semibold text-slate-900 hover:border-slate-200 focus:border-slate-300 focus:outline-none"
-            />
+        {/* Scene Toolbar (2-Row @container-responsive layout with wrap protection) */}
+        <div className="shrink-0 border-b border-slate-200 bg-white">
+          {/* Row 1: Scene Title + Format Switch + Focus Mode */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 @xl:px-4 py-1.5">
+            <div className="min-w-[140px] flex-1">
+              <input
+                type="text"
+                aria-label="シーンタイトル"
+                value={scene.title}
+                onChange={(e) => onUpdateScene({ ...scene, title: e.target.value })}
+                placeholder="シーンタイトル"
+                className="w-full min-w-0 rounded border border-transparent px-1.5 py-1 text-sm font-semibold text-slate-900 hover:border-slate-200 focus:border-slate-300 focus:bg-slate-50/60 focus:outline-none"
+              />
+            </div>
 
-            <select
-              value={scene.visibility}
-              onChange={(e) =>
-                onUpdateScene({
-                  ...scene,
-                  visibility: e.target.value as VisibilityType,
-                })
-              }
-              className={`rounded border px-2 py-1 text-xs font-medium focus:outline-none ${
-                scene.visibility === 'adult_only'
-                  ? 'border-rose-200 bg-rose-50 text-rose-700'
-                  : scene.visibility === 'general_alt'
-                    ? 'border-slate-300 bg-slate-100 text-slate-700'
-                    : 'border-slate-200 bg-white text-slate-600'
-              }`}
-            >
-              <option value="common">共通 (common)</option>
-              <option value="general_alt">一般差替 (general_alt)</option>
-              <option value="adult_only">R18専用 (adult_only)</option>
-            </select>
-
-            <label
-              className="flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-              title="保存先フォルダを変更"
-            >
-              <Folder className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-              <select
-                value={scene.folder ?? ''}
-                aria-label="シーンの保存先フォルダ"
-                onChange={(e) => onMoveSceneToFolder(scene.sceneId, e.target.value || undefined)}
-                className="max-w-[140px] bg-transparent text-xs text-slate-700 focus:outline-none"
+            <div className="flex flex-wrap items-center gap-1.5 max-w-full">
+              {/* Format Toggle: Prose <-> Manga Script */}
+              <div
+                role="group"
+                aria-label="シーン形式の切替"
+                className="flex items-center rounded border border-slate-200 bg-slate-100 p-0.5 max-w-full"
               >
-                <option value="">scenes/ (直下)</option>
-                {sceneFolders.map((folder) => (
-                  <option key={folder} value={folder}>
-                    {folder}/
-                  </option>
-                ))}
-              </select>
-            </label>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchSceneFormat('prose')}
+                  className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium transition-colors whitespace-nowrap ${
+                    !isManga
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <FileText className="h-3 w-3 shrink-0" />
+                  <span>ノベル</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchSceneFormat('manga')}
+                  className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium transition-colors whitespace-nowrap ${
+                    isManga
+                      ? isAdult
+                        ? 'bg-rose-700 text-white shadow-2xs'
+                        : 'bg-slate-800 text-white shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <LayoutPanelTop className="h-3 w-3 shrink-0" />
+                  <span>マンガ脚本</span>
+                </button>
+              </div>
 
-            <div className="relative">
               <button
                 type="button"
-                onClick={() => setShowCharDropdown((v) => !v)}
-                className="flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 whitespace-nowrap"
+                onClick={onToggleFocusMode}
+                title="左右ペインを隠して執筆に集中 (Escで解除)"
+                className={`flex items-center gap-1 rounded border px-2 @lg:px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
+                  focusMode
+                    ? isAdult
+                      ? 'border-rose-700 bg-rose-700 text-white'
+                      : 'border-slate-800 bg-slate-800 text-white'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                }`}
               >
-                <Users className="h-3.5 w-3.5 text-slate-400" />
-                <span>登場 ({scene.characters.length})</span>
+                {focusMode ? (
+                  <Minimize2 className="h-3.5 w-3.5 shrink-0" />
+                ) : (
+                  <Maximize2 className="h-3.5 w-3.5 shrink-0" />
+                )}
+                <span className="hidden @md:inline">
+                  {focusMode ? 'フォーカス解除' : 'フォーカス'}
+                </span>
+                <span className="@md:hidden">{focusMode ? '解除' : '集中'}</span>
               </button>
-              {showCharDropdown && (
-                <div className="absolute left-0 mt-1 w-52 rounded-md border border-slate-200 bg-white p-2 shadow-lg z-30">
-                  <div className="mb-1.5 text-[11px] font-medium text-slate-500">
-                    このシーンの登場キャラクター
-                  </div>
-                  <div className="space-y-1">
-                    {characters.map((c) => (
-                      <label
-                        key={c.id}
-                        className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={scene.characters.includes(c.id)}
-                          onChange={() => toggleCharacterInScene(c.id)}
-                        />
-                        <span>{c.common.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowCharDropdown(false)}
-                    className="mt-2 w-full rounded bg-slate-100 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-200"
-                  >
-                    閉じる
-                  </button>
-                </div>
-              )}
             </div>
           </div>
 
-          {/* Workspace View Toggles */}
-          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-            {/* Format Toggle: Prose <-> Manga Script */}
-            <div
-              role="group"
-              aria-label="シーン形式の切替"
-              className="flex items-center rounded border border-slate-200 bg-slate-100 p-0.5 shrink-0"
-            >
-              <button
-                type="button"
-                onClick={() => handleSwitchSceneFormat('prose')}
-                className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium transition-colors whitespace-nowrap ${
-                  !isManga
-                    ? 'bg-white text-slate-900 shadow-2xs'
-                    : 'text-slate-500 hover:text-slate-800'
+          {/* Row 2: Scene Metadata (Left) + Workspace View Toggles (Right) */}
+          <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-t border-slate-100 bg-slate-50/50 px-3 @xl:px-4 py-1.5">
+            {/* Metadata Controls */}
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0 max-w-full">
+              <select
+                value={scene.visibility}
+                aria-label="シーンの公開区分"
+                onChange={(e) =>
+                  onUpdateScene({
+                    ...scene,
+                    visibility: e.target.value as VisibilityType,
+                  })
+                }
+                className={`max-w-full rounded border px-2 py-1 text-xs font-medium focus:outline-none ${
+                  scene.visibility === 'adult_only'
+                    ? 'border-rose-200 bg-rose-50 text-rose-700'
+                    : scene.visibility === 'general_alt'
+                      ? 'border-slate-300 bg-slate-100 text-slate-700'
+                      : 'border-slate-200 bg-white text-slate-600'
                 }`}
               >
-                <FileText className="h-3 w-3" />
-                <span>ノベル</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSwitchSceneFormat('manga')}
-                className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium transition-colors whitespace-nowrap ${
-                  isManga
-                    ? isAdult
-                      ? 'bg-rose-700 text-white shadow-2xs'
-                      : 'bg-slate-800 text-white shadow-2xs'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
+                <option value="common">共通 (common)</option>
+                <option value="general_alt">一般差替 (general_alt)</option>
+                <option value="adult_only">R18専用 (adult_only)</option>
+              </select>
+
+              <label
+                className="flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 min-w-0 max-w-full"
+                title="保存先フォルダを変更"
               >
-                <LayoutPanelTop className="h-3 w-3" />
-                <span>マンガ脚本</span>
-              </button>
+                <Folder className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                <select
+                  value={scene.folder ?? ''}
+                  aria-label="シーンの保存先フォルダ"
+                  onChange={(e) => onMoveSceneToFolder(scene.sceneId, e.target.value || undefined)}
+                  className="min-w-0 max-w-[130px] @lg:max-w-[180px] truncate bg-transparent text-xs text-slate-700 focus:outline-none"
+                >
+                  <option value="">scenes/ (直下)</option>
+                  {sceneFolders.map((folder) => (
+                    <option key={folder} value={folder}>
+                      {folder}/
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="relative" ref={charDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setShowCharDropdown((v) => !v)}
+                  className="flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 whitespace-nowrap"
+                >
+                  <Users className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                  <span>登場 ({scene.characters.length})</span>
+                </button>
+                {showCharDropdown && (
+                  <div className="absolute left-0 mt-1 w-52 max-w-[calc(100vw-2rem)] rounded-md border border-slate-200 bg-white p-2 shadow-lg z-30">
+                    <div className="mb-1.5 text-[11px] font-medium text-slate-500">
+                      このシーンの登場キャラクター
+                    </div>
+                    <div className="max-h-56 space-y-1 overflow-y-auto">
+                      {characters.map((c) => (
+                        <label
+                          key={c.id}
+                          className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={scene.characters.includes(c.id)}
+                            onChange={() => toggleCharacterInScene(c.id)}
+                          />
+                          <span className="truncate">{c.common.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowCharDropdown(false)}
+                      className="mt-2 w-full rounded bg-slate-100 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-200"
+                    >
+                      閉じる
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <button
-              type="button"
-              onClick={onToggleSplitView}
-              className={`flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                splitView
-                  ? isAdult
-                    ? 'border-rose-300 bg-rose-50 text-rose-800'
-                    : 'border-slate-300 bg-slate-100 text-slate-900'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <Columns2 className="h-3.5 w-3.5" />
-              <span>2分割プロット</span>
-            </button>
+            {/* Workspace View Toggles */}
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0 max-w-full">
+              <button
+                type="button"
+                onClick={onToggleSplitView}
+                title="プロットボードを並べて2分割表示"
+                className={`flex items-center gap-1.5 rounded border px-2 @lg:px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
+                  splitView
+                    ? isAdult
+                      ? 'border-rose-300 bg-rose-50 text-rose-800'
+                      : 'border-slate-300 bg-slate-100 text-slate-900'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <Columns2 className="h-3.5 w-3.5 shrink-0" />
+                <span className="hidden @lg:inline">2分割プロット</span>
+                <span className="@lg:hidden">2分割</span>
+              </button>
 
-            {!isManga && (
-              <>
-                <button
-                  type="button"
-                  onClick={onToggleVerticalWriting}
-                  className={`flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                    verticalWriting
-                      ? isAdult
-                        ? 'border-rose-300 bg-rose-50 text-rose-800'
-                        : 'border-slate-300 bg-slate-100 text-slate-900'
-                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {verticalWriting ? (
-                    <BookOpen className="h-3.5 w-3.5" />
-                  ) : (
-                    <AlignJustify className="h-3.5 w-3.5" />
-                  )}
-                  <span>{verticalWriting ? '縦書き' : '横書き'}</span>
-                </button>
+              {!isManga && (
+                <>
+                  <button
+                    type="button"
+                    onClick={onToggleVerticalWriting}
+                    title={verticalWriting ? '横書きに切替' : '縦書きに切替'}
+                    className={`flex items-center gap-1.5 rounded border px-2 @lg:px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
+                      verticalWriting
+                        ? isAdult
+                          ? 'border-rose-300 bg-rose-50 text-rose-800'
+                          : 'border-slate-300 bg-slate-100 text-slate-900'
+                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {verticalWriting ? (
+                      <BookOpen className="h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <AlignJustify className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span>{verticalWriting ? '縦書き' : '横書き'}</span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => setShowPreview((v) => !v)}
-                  className="flex items-center gap-1 rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 whitespace-nowrap shrink-0"
-                >
-                  {showPreview ? (
-                    <Eye className="h-3.5 w-3.5" />
-                  ) : (
-                    <EyeOff className="h-3.5 w-3.5" />
-                  )}
-                  <span>プレビュー</span>
-                </button>
-              </>
-            )}
-
-            <button
-              type="button"
-              onClick={onToggleFocusMode}
-              title="左右ペインを隠して執筆に集中 (Escで解除)"
-              className={`flex items-center gap-1 rounded border px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                focusMode
-                  ? isAdult
-                    ? 'border-rose-700 bg-rose-700 text-white'
-                    : 'border-slate-800 bg-slate-800 text-white'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              {focusMode ? (
-                <Minimize2 className="h-3.5 w-3.5" />
-              ) : (
-                <Maximize2 className="h-3.5 w-3.5" />
+                  <button
+                    type="button"
+                    onClick={() => setShowPreview((v) => !v)}
+                    title={showPreview ? 'プレビューを非表示' : 'プレビューを表示'}
+                    className="flex items-center gap-1 rounded border border-slate-200 bg-white px-2 @lg:px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 whitespace-nowrap"
+                  >
+                    {showPreview ? (
+                      <Eye className="h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <EyeOff className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span>プレビュー</span>
+                  </button>
+                </>
               )}
-              <span>{focusMode ? 'フォーカス解除' : 'フォーカス'}</span>
-            </button>
+            </div>
           </div>
         </div>
 
