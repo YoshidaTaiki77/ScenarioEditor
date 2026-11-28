@@ -16,6 +16,7 @@ import {
   type WorldSettingData,
 } from '../types/scenario';
 import { INITIAL_WORKSPACE } from '../data/initialProject';
+import { normalizeReferenceImages } from './imageUtils';
 import { parseSceneMarkdown, serializeSceneMarkdown } from './scenarioEngine';
 
 const DB_NAME = 'kotonoha-scenario-db';
@@ -226,10 +227,13 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
         }))
       : [];
 
+    const normalizedImages = normalizeReferenceImages(c.images);
+
     return {
       ...c,
       filename: getCharacterFilename(c),
       folder: cleanFolder || undefined,
+      images: normalizedImages,
       relations: normalizedRelations,
       customCommonFields: normalizedCustomCommonFields,
       commonFieldLabels: {},
@@ -494,6 +498,7 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
 
     const adultNote = typeof w.adultNote === 'string' ? w.adultNote : '';
     const enableAdultNote = Boolean(w.enableAdultNote || adultNote.trim().length > 0);
+    const normalizedImages = normalizeReferenceImages(w.images);
 
     return {
       id: w.id,
@@ -503,6 +508,7 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
       ruby: typeof w.ruby === 'string' ? w.ruby : '',
       summary: typeof w.summary === 'string' ? w.summary : '',
       details: typeof w.details === 'string' ? w.details : '',
+      images: normalizedImages,
       customFields: normalizedCustomFields,
       enableAdultNote,
       adultNote,

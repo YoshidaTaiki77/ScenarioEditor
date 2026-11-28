@@ -77,12 +77,25 @@ export type CharacterProfile = Record<string, string>;
 
 export type LockableCharacterField = string;
 
+export interface ReferenceImage {
+  id: string;
+  dataUrl: string;
+  label: string;
+  visibility: VisibilityType;
+  width?: number;
+  height?: number;
+  createdAt?: string;
+}
+
+export type CharacterImage = ReferenceImage;
+
 export interface CharacterData {
   id: string;
   filename?: string; // JSON filename in characters/, e.g. "ren.json"
   folder?: string; // Subfolder name under characters/, e.g. "メイン"
   shortName: string; // Dialogue prefix name, e.g. "蓮" or "栞"
   common: CharacterCommon;
+  images?: ReferenceImage[];
   relations?: CharacterRelation[];
   customCommonFields?: CustomCommonField[];
   commonFieldLabels?: Record<string, string>;
@@ -250,6 +263,7 @@ export interface WorldSettingData {
   ruby?: string;
   summary: string;
   details: string;
+  images?: ReferenceImage[];
   customFields?: WorldCustomField[];
   enableAdultNote?: boolean;
   adultNote?: string;

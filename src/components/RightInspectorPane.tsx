@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   BookMarked,
@@ -9,6 +9,7 @@ import {
   FileWarning,
   HelpCircle,
   Lock,
+  Maximize2,
   User,
   X,
 } from 'lucide-react';
@@ -21,11 +22,13 @@ import {
   type SelectedItem,
   type WorldSettingData,
 } from '../types/scenario';
+import { filterReferenceImagesForMode } from '../utils/imageUtils';
 import {
   detectSpeakerOnLine,
   proofreadScene,
   resolveCharacterProfile,
 } from '../utils/scenarioEngine';
+import { ImageLightboxModal } from './CharacterImageGallery';
 import { UsageGuideTab } from './UsageGuideTab';
 
 type InspectorTab = 'reference' | 'proofread' | 'guide';
@@ -64,6 +67,10 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
   const [worldSearchQuery, setWorldSearchQuery] = useState<string>('');
   const [selectedWorldId, setSelectedWorldId] = useState<string>('');
   const [copiedVarKey, setCopiedVarKey] = useState<string | null>(null);
+  const [selectedImageIdx, setSelectedImageIdx] = useState(0);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [selectedWorldImageIdx, setSelectedWorldImageIdx] = useState(0);
+  const [worldLightboxIndex, setWorldLightboxIndex] = useState<number | null>(null);
 
   const isAdult = activeMode === 'adult';
 
@@ -85,6 +92,25 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
     if (!activeCharacter) return null;
     return resolveCharacterProfile(activeCharacter, activeMode);
   }, [activeCharacter, activeMode]);
+
+  const visibleCharImages = useMemo(
+    () => filterReferenceImagesForMode(activeCharacter?.images, activeMode),
+    [activeCharacter, activeMode]
+  );
+
+  useEffect(() => {
+    setSelectedImageIdx(0);
+    setLightboxIndex(null);
+  }, [activeCharacter?.id, activeMode]);
+
+  useEffect(() => {
+    if (visibleCharImages.length === 0) {
+      setSelectedImageIdx(0);
+      setLightboxIndex(null);
+    } else if (selectedImageIdx >= visibleCharImages.length) {
+      setSelectedImageIdx(0);
+    }
+  }, [visibleCharImages.length, selectedImageIdx]);
 
   const filteredWorldSettings = useMemo(() => {
     const q = worldSearchQuery.trim().toLowerCase();
@@ -116,6 +142,25 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
     }
     return filteredWorldSettings[0];
   }, [filteredWorldSettings, selectedWorldId]);
+
+  const visibleWorldImages = useMemo(
+    () => filterReferenceImagesForMode(activeWorldItem?.images, activeMode),
+    [activeWorldItem, activeMode]
+  );
+
+  useEffect(() => {
+    setSelectedWorldImageIdx(0);
+    setWorldLightboxIndex(null);
+  }, [activeWorldItem?.id, activeMode]);
+
+  useEffect(() => {
+    if (visibleWorldImages.length === 0) {
+      setSelectedWorldImageIdx(0);
+      setWorldLightboxIndex(null);
+    } else if (selectedWorldImageIdx >= visibleWorldImages.length) {
+      setSelectedWorldImageIdx(0);
+    }
+  }, [visibleWorldImages.length, selectedWorldImageIdx]);
 
   const worldVariableItems = useMemo(() => {
     if (!activeWorldItem) return [];
@@ -554,6 +599,71 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                         )}
                       </div>
 
+                      {visibleWorldImages.length > 0 && (() => {
+                        const safeIdx = Math.min(selectedWorldImageIdx, visibleWorldImages.length - 1);
+                        const activeImg = visibleWorldImages[safeIdx];
+                        if (!activeImg) return null;
+                        return (
+                          <div className="space-y-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setWorldLightboxIndex(safeIdx)}
+                              className="group relative flex h-40 w-full items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-[repeating-conic-gradient(#f1f5f9_0%_25%,#ffffff_0%_50%)] bg-[length:14px_14px] focus:outline-none focus:ring-2 focus:ring-slate-400"
+                              title="クリックして設定画像を拡大表示"
+                            >
+                              <img
+                                src={activeImg.dataUrl}
+                                alt={activeImg.label || activeWorldItem.name}
+                                className="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.02]"
+                              />
+                              <span className="pointer-events-none absolute right-1.5 top-1.5 flex items-center gap-1 rounded bg-slate-900/70 px-1.5 py-0.5 text-[10px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">
+                                <Maximize2 className="h-2.5 w-2.5" />
+                                拡大
+                              </span>
+                              {(activeImg.label || activeImg.visibility === 'adult_only') && (
+                                <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-1.5 bg-gradient-to-t from-slate-950/75 via-slate-950/35 to-transparent px-2 pb-1 pt-4 text-left">
+                                  <span className="truncate text-[10px] font-medium text-white">
+                                    {activeImg.label || '設定画像'}
+                                  </span>
+                                  {activeImg.visibility === 'adult_only' && (
+                                    <span className="shrink-0 rounded bg-rose-600/90 px-1 py-0.2 text-[9px] font-semibold text-white">
+                                      R18
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </button>
+
+                            {visibleWorldImages.length > 1 && (
+                              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                                {visibleWorldImages.map((img, idx) => {
+                                  const isSelected = idx === safeIdx;
+                                  return (
+                                    <button
+                                      key={img.id}
+                                      type="button"
+                                      onClick={() => setSelectedWorldImageIdx(idx)}
+                                      className={`relative h-10 w-10 shrink-0 overflow-hidden rounded border transition ${
+                                        isSelected
+                                          ? 'border-slate-900 ring-1 ring-slate-900/40'
+                                          : 'border-slate-200 opacity-75 hover:opacity-100'
+                                      } bg-[repeating-conic-gradient(#f1f5f9_0%_25%,#ffffff_0%_50%)] bg-[length:10px_10px]`}
+                                      title={img.label || `設定画像 ${idx + 1}`}
+                                    >
+                                      <img
+                                        src={img.dataUrl}
+                                        alt={img.label || `設定画像 ${idx + 1}`}
+                                        className="h-full w-full object-cover"
+                                      />
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
                       {activeWorldItem.summary && (
                         <div>
                           <div className="text-[11px] font-medium text-slate-500">概要</div>
@@ -738,6 +848,71 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                         .join(' · ')}
                     </div>
                   </div>
+
+                  {visibleCharImages.length > 0 && (() => {
+                    const safeIdx = Math.min(selectedImageIdx, visibleCharImages.length - 1);
+                    const activeImg = visibleCharImages[safeIdx];
+                    if (!activeImg) return null;
+                    return (
+                      <div className="space-y-1.5 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setLightboxIndex(safeIdx)}
+                          className="group relative flex h-40 w-full items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-[repeating-conic-gradient(#f1f5f9_0%_25%,#ffffff_0%_50%)] bg-[length:14px_14px] focus:outline-none focus:ring-2 focus:ring-slate-400"
+                          title="クリックして設定画像を拡大表示"
+                        >
+                          <img
+                            src={activeImg.dataUrl}
+                            alt={activeImg.label || resolvedChar.name}
+                            className="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.02]"
+                          />
+                          <span className="pointer-events-none absolute right-1.5 top-1.5 flex items-center gap-1 rounded bg-slate-900/70 px-1.5 py-0.5 text-[10px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">
+                            <Maximize2 className="h-2.5 w-2.5" />
+                            拡大
+                          </span>
+                          {(activeImg.label || activeImg.visibility === 'adult_only') && (
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-1.5 bg-gradient-to-t from-slate-950/75 via-slate-950/35 to-transparent px-2 pb-1 pt-4 text-left">
+                              <span className="truncate text-[10px] font-medium text-white">
+                                {activeImg.label || '設定画像'}
+                              </span>
+                              {activeImg.visibility === 'adult_only' && (
+                                <span className="shrink-0 rounded bg-rose-600/90 px-1 py-0.2 text-[9px] font-semibold text-white">
+                                  R18
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </button>
+
+                        {visibleCharImages.length > 1 && (
+                          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                            {visibleCharImages.map((img, idx) => {
+                              const isSelected = idx === safeIdx;
+                              return (
+                                <button
+                                  key={img.id}
+                                  type="button"
+                                  onClick={() => setSelectedImageIdx(idx)}
+                                  className={`relative h-10 w-10 shrink-0 overflow-hidden rounded border transition ${
+                                    isSelected
+                                      ? 'border-slate-900 ring-1 ring-slate-900/40'
+                                      : 'border-slate-200 opacity-75 hover:opacity-100'
+                                  } bg-[repeating-conic-gradient(#f1f5f9_0%_25%,#ffffff_0%_50%)] bg-[length:10px_10px]`}
+                                  title={img.label || `設定画像 ${idx + 1}`}
+                                >
+                                  <img
+                                    src={img.dataUrl}
+                                    alt={img.label || `設定画像 ${idx + 1}`}
+                                    className="h-full w-full object-cover"
+                                  />
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <dl className="space-y-1.5 pt-1 text-xs">
                     {(
@@ -1239,6 +1414,22 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
           <UsageGuideTab activeMode={activeMode} selectedItemType={selectedItemType} />
         )}
       </div>
+
+      <ImageLightboxModal
+        images={visibleCharImages}
+        activeIndex={lightboxIndex}
+        onChangeIndex={setLightboxIndex}
+        onClose={() => setLightboxIndex(null)}
+        altFallback={resolvedChar ? `${resolvedChar.name}の設定画像` : 'キャラクター設定画像'}
+      />
+
+      <ImageLightboxModal
+        images={visibleWorldImages}
+        activeIndex={worldLightboxIndex}
+        onChangeIndex={setWorldLightboxIndex}
+        onClose={() => setWorldLightboxIndex(null)}
+        altFallback={activeWorldItem ? `${activeWorldItem.name}の設定画像` : '世界観設定画像'}
+      />
     </aside>
   );
 };

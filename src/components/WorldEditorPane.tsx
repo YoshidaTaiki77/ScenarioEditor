@@ -19,6 +19,7 @@ import type {
   WorldSettingData,
 } from '../types/scenario';
 import { getWorldFilename, triggerDownload } from '../utils/storageManager';
+import { ReferenceImageGallery } from './CharacterImageGallery';
 
 interface AutoGrowTextareaProps {
   value: string;
@@ -491,6 +492,22 @@ export const WorldEditorPane: React.FC<WorldEditorPaneProps> = ({
               舞台・アイテム・用語などの名称と概要、詳細な設定本文を記述します
             </p>
           </div>
+
+          {/* 世界観設定画像 */}
+          <ReferenceImageGallery
+            entityId={worldItem.id}
+            images={worldItem.images ?? []}
+            activeMode={activeMode}
+            entityUnitLabel="1つの世界観設定"
+            labelPlaceholder="ラベル（例: 外観・間取り図・アイテム資料）"
+            altFallback={`${worldItem.name || '世界観'}の設定画像`}
+            onChangeImages={(nextImages) =>
+              onUpdateWorldSetting({
+                ...worldItem,
+                images: nextImages.length > 0 ? nextImages : undefined,
+              })
+            }
+          />
 
           <div className="grid grid-cols-1 @xl:grid-cols-2 gap-4">
             <label className="block space-y-1">

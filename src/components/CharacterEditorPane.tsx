@@ -27,6 +27,7 @@ import {
   type StandardCharacterCategory,
 } from '../types/scenario';
 import { getCharacterFilename, triggerDownload } from '../utils/storageManager';
+import { CharacterImageGallery } from './CharacterImageGallery';
 
 interface AutoGrowTextareaProps {
   value: string;
@@ -1353,6 +1354,19 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
 
             return (
               <>
+                {/* 0. キャラクター設定画像 */}
+                <CharacterImageGallery
+                  characterId={character.id}
+                  images={character.images ?? []}
+                  activeMode={activeMode}
+                  onChangeImages={(nextImages) =>
+                    onUpdateCharacter({
+                      ...character,
+                      images: nextImages.length > 0 ? nextImages : undefined,
+                    })
+                  }
+                />
+
                 {/* 1. 基本情報 */}
                 <div className="space-y-3">
                   <h4 className="text-[11px] font-semibold tracking-wide text-slate-500">
