@@ -16,6 +16,7 @@ Thumbs.db
 # Local scenario workspace data & exports (prevent accidental commit)
 project.json
 characters/
+world/
 plots/
 scenes/
 history/

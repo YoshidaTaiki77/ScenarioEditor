@@ -61,7 +61,7 @@ export default defineConfig(() => {
                   maxAgeSeconds: 60 * 60 * 24 * 365,
                 },
                 cacheableResponse: {
-                  statuses: [0, 200],
+                  statuses: [200],
                 },
               },
             },
@@ -75,7 +75,7 @@ export default defineConfig(() => {
                   maxAgeSeconds: 60 * 60 * 24 * 365,
                 },
                 cacheableResponse: {
-                  statuses: [0, 200],
+                  statuses: [200],
                 },
               },
             },
@@ -86,6 +86,36 @@ export default defineConfig(() => {
           type: 'module',
         },
       }),
+      // Inject a strict Content-Security-Policy meta tag for production static builds
+      // (GitHub Pages does not allow custom HTTP response headers). Applied only on build
+      // so the Vite dev server / React Fast Refresh preamble continues to work smoothly.
+      {
+        name: 'inject-production-csp',
+        apply: 'build',
+        transformIndexHtml(html) {
+          const cspDirectives = [
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+            "font-src 'self' https://fonts.gstatic.com",
+            "img-src 'self' data: blob:",
+            "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
+            "worker-src 'self'",
+            "manifest-src 'self'",
+            "object-src 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
+          ].join('; ');
+          const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${cspDirectives}" />`;
+          if (html.includes('<meta charset="UTF-8" />')) {
+            return html.replace(
+              '<meta charset="UTF-8" />',
+              `<meta charset="UTF-8" />\n    ${cspMeta}`
+            );
+          }
+          return html.replace('<head>', `<head>\n    ${cspMeta}`);
+        },
+      },
       // Copies src/assets into dist/ so root-relative URLs like
       // "/src/assets/images/..." (e.g. generate_image output) still resolve
       // in production builds. Do not remove.

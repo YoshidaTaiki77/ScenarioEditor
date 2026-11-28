@@ -78,27 +78,62 @@ export interface ParentDirectoryPickResult {
   message?: string;
 }
 
-export function sanitizeProjectFolderName(name?: string): string {
-  const cleaned = (name ?? '')
+const WINDOWS_RESERVED_NAME_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const MAX_SAFE_JSON_CHARS = 50 * 1024 * 1024; // 50MB safety ceiling
+const DANGEROUS_JSON_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function sanitizePathSegment(raw?: string): string {
+  const cleaned = (raw ?? '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, '')
     .trim()
     .replace(/[\\/:*?"<>|]/g, '')
+    .replace(/^\.+/, '')
     .replace(/[. ]+$/g, '');
   if (!cleaned || cleaned === '.' || cleaned === '..') return '';
-  return cleaned;
+  if (WINDOWS_RESERVED_NAME_RE.test(cleaned)) return '';
+  return cleaned.slice(0, 120);
+}
+
+export function sanitizeFilename(
+  raw: string | undefined,
+  fallbackStem: string,
+  extension: '.json' | '.md'
+): string {
+  const extLower = extension.toLowerCase();
+  const safeFallbackStem = sanitizePathSegment(fallbackStem) || 'untitled';
+  const trimmed = (raw ?? '').trim();
+  const strippedExt = trimmed.toLowerCase().endsWith(extLower)
+    ? trimmed.slice(0, -extension.length)
+    : trimmed;
+  const stem = sanitizePathSegment(strippedExt) || safeFallbackStem;
+  return `${stem}${extension}`;
+}
+
+function safeJsonParse<T>(text: string): T | null {
+  if (typeof text !== 'string' || text.length === 0 || text.length > MAX_SAFE_JSON_CHARS) {
+    return null;
+  }
+  try {
+    return JSON.parse(text, (key, value) => {
+      if (DANGEROUS_JSON_KEYS.has(key)) return undefined;
+      return value;
+    }) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function sanitizeProjectFolderName(name?: string): string {
+  return sanitizePathSegment(name);
 }
 
 export function sanitizeCharacterFolderName(folder?: string): string {
-  const cleaned = (folder ?? '')
-    .trim()
-    .replace(/[\\/:*?"<>|]/g, '');
-  if (!cleaned || cleaned === '.' || cleaned === '..') return '';
-  return cleaned;
+  return sanitizePathSegment(folder);
 }
 
 export function getCharacterFilename(char: CharacterData): string {
-  const raw = (char.filename ?? '').trim();
-  const base = raw || `${char.id}.json`;
-  return base.toLowerCase().endsWith('.json') ? base : `${base}.json`;
+  return sanitizeFilename(char.filename, char.id, '.json');
 }
 
 export function getCharacterRelativePath(char: CharacterData): string {
@@ -108,23 +143,15 @@ export function getCharacterRelativePath(char: CharacterData): string {
 }
 
 export function getPlotFilename(plot: PlotData): string {
-  const raw = (plot.filename ?? '').trim();
-  const base = raw || `${plot.plotId}.json`;
-  return base.toLowerCase().endsWith('.json') ? base : `${base}.json`;
+  return sanitizeFilename(plot.filename, plot.plotId, '.json');
 }
 
 export function sanitizeSceneFolderName(folder?: string): string {
-  const cleaned = (folder ?? '')
-    .trim()
-    .replace(/[\\/:*?"<>|]/g, '');
-  if (!cleaned || cleaned === '.' || cleaned === '..') return '';
-  return cleaned;
+  return sanitizePathSegment(folder);
 }
 
 export function getSceneFilename(scene: SceneData): string {
-  const raw = (scene.filename ?? '').trim();
-  const base = raw || `${scene.sceneId}.md`;
-  return base.toLowerCase().endsWith('.md') ? base : `${base}.md`;
+  return sanitizeFilename(scene.filename, scene.sceneId, '.md');
 }
 
 export function getSceneRelativePath(scene: SceneData): string {
@@ -134,17 +161,11 @@ export function getSceneRelativePath(scene: SceneData): string {
 }
 
 export function sanitizeWorldFolderName(folder?: string): string {
-  const cleaned = (folder ?? '')
-    .trim()
-    .replace(/[\\/:*?"<>|]/g, '');
-  if (!cleaned || cleaned === '.' || cleaned === '..') return '';
-  return cleaned;
+  return sanitizePathSegment(folder);
 }
 
 export function getWorldFilename(item: WorldSettingData): string {
-  const raw = (item.filename ?? '').trim();
-  const base = raw || `${item.id}.json`;
-  return base.toLowerCase().endsWith('.json') ? base : `${base}.json`;
+  return sanitizeFilename(item.filename, item.id, '.json');
 }
 
 export function getWorldRelativePath(item: WorldSettingData): string {
@@ -642,7 +663,7 @@ export async function loadWorkspaceFromBrowser(): Promise<{
     try {
       const raw = localStorage.getItem(LS_FALLBACK_KEY);
       if (raw) {
-        const parsed = JSON.parse(raw) as ScenarioWorkspace;
+        const parsed = safeJsonParse<ScenarioWorkspace>(raw);
         if (parsed?.project && Array.isArray(parsed.scenes)) {
           return { workspace: normalizeWorkspace(parsed), storageMode: 'localstorage' };
         }
@@ -864,7 +885,8 @@ export async function readWorkspaceFromDirectory(
   try {
     const projectHandle = await rootDir.getFileHandle('project.json');
     const projectFile = await projectHandle.getFile();
-    const project = JSON.parse(await projectFile.text()) as ProjectData;
+    const project = safeJsonParse<ProjectData>(await projectFile.text());
+    if (!project || typeof project !== 'object') return null;
 
     const characters: CharacterData[] = [];
     const discoveredFolders: string[] = [];
@@ -872,22 +894,34 @@ export async function readWorkspaceFromDirectory(
       const charDir = await rootDir.getDirectoryHandle('characters');
       for await (const entry of charDir.values()) {
         if (entry.kind === 'file' && entry.name.endsWith('.json')) {
-          const f = await entry.getFile();
-          const parsed = JSON.parse(await f.text()) as CharacterData;
-          characters.push({ ...parsed, folder: undefined, filename: entry.name });
+          try {
+            const f = await entry.getFile();
+            const parsed = safeJsonParse<CharacterData>(await f.text());
+            if (parsed && typeof parsed === 'object' && typeof parsed.id === 'string') {
+              characters.push({ ...parsed, folder: undefined, filename: entry.name });
+            }
+          } catch {
+            // Skip unreadable or malformed character file
+          }
         } else if (entry.kind === 'directory') {
           const folderName = sanitizeCharacterFolderName(entry.name);
           if (folderName) {
             discoveredFolders.push(folderName);
             for await (const subEntry of entry.values()) {
               if (subEntry.kind === 'file' && subEntry.name.endsWith('.json')) {
-                const f = await subEntry.getFile();
-                const parsed = JSON.parse(await f.text()) as CharacterData;
-                characters.push({
-                  ...parsed,
-                  folder: folderName,
-                  filename: subEntry.name,
-                });
+                try {
+                  const f = await subEntry.getFile();
+                  const parsed = safeJsonParse<CharacterData>(await f.text());
+                  if (parsed && typeof parsed === 'object' && typeof parsed.id === 'string') {
+                    characters.push({
+                      ...parsed,
+                      folder: folderName,
+                      filename: subEntry.name,
+                    });
+                  }
+                } catch {
+                  // Skip unreadable or malformed character file
+                }
               }
             }
           }
@@ -913,22 +947,34 @@ export async function readWorkspaceFromDirectory(
       const worldDir = await rootDir.getDirectoryHandle('world');
       for await (const entry of worldDir.values()) {
         if (entry.kind === 'file' && entry.name.endsWith('.json')) {
-          const f = await entry.getFile();
-          const parsed = JSON.parse(await f.text()) as WorldSettingData;
-          worldSettings.push({ ...parsed, folder: undefined, filename: entry.name });
+          try {
+            const f = await entry.getFile();
+            const parsed = safeJsonParse<WorldSettingData>(await f.text());
+            if (parsed && typeof parsed === 'object' && typeof parsed.id === 'string') {
+              worldSettings.push({ ...parsed, folder: undefined, filename: entry.name });
+            }
+          } catch {
+            // Skip unreadable or malformed world file
+          }
         } else if (entry.kind === 'directory') {
           const folderName = sanitizeWorldFolderName(entry.name);
           if (folderName) {
             discoveredWorldFolders.push(folderName);
             for await (const subEntry of entry.values()) {
               if (subEntry.kind === 'file' && subEntry.name.endsWith('.json')) {
-                const f = await subEntry.getFile();
-                const parsed = JSON.parse(await f.text()) as WorldSettingData;
-                worldSettings.push({
-                  ...parsed,
-                  folder: folderName,
-                  filename: subEntry.name,
-                });
+                try {
+                  const f = await subEntry.getFile();
+                  const parsed = safeJsonParse<WorldSettingData>(await f.text());
+                  if (parsed && typeof parsed === 'object' && typeof parsed.id === 'string') {
+                    worldSettings.push({
+                      ...parsed,
+                      folder: folderName,
+                      filename: subEntry.name,
+                    });
+                  }
+                } catch {
+                  // Skip unreadable or malformed world file
+                }
               }
             }
           }
@@ -956,9 +1002,15 @@ export async function readWorkspaceFromDirectory(
       const plotDir = await rootDir.getDirectoryHandle('plots');
       for await (const entry of plotDir.values()) {
         if (entry.kind === 'file' && entry.name.endsWith('.json')) {
-          const f = await entry.getFile();
-          const parsed = JSON.parse(await f.text()) as PlotData;
-          plots.push({ ...parsed, filename: entry.name });
+          try {
+            const f = await entry.getFile();
+            const parsed = safeJsonParse<PlotData>(await f.text());
+            if (parsed && typeof parsed === 'object' && typeof parsed.plotId === 'string') {
+              plots.push({ ...parsed, filename: entry.name });
+            }
+          } catch {
+            // Skip unreadable or malformed plot file
+          }
         }
       }
       plots.sort((a, b) => getPlotFilename(a).localeCompare(getPlotFilename(b), 'ja'));
@@ -1211,7 +1263,7 @@ async function loadHistoryFromBrowser(): Promise<HistorySnapshot[]> {
     try {
       const raw = localStorage.getItem(LS_HISTORY_FALLBACK_KEY);
       if (!raw) return [];
-      const parsedArr = JSON.parse(raw) as unknown[];
+      const parsedArr = safeJsonParse<unknown[]>(raw);
       if (!Array.isArray(parsedArr)) return [];
       const parsed = parsedArr
         .map((item) => parseSnapshotObject(item))
@@ -1260,7 +1312,7 @@ async function readHistoryFromDirectory(
           const file = await entry.getFile();
           const text = await file.text();
           const parsed = parseSnapshotObject(
-            JSON.parse(text),
+            safeJsonParse<unknown>(text),
             entry.name,
             computeUtf8ByteSize(text)
           );
@@ -1292,7 +1344,7 @@ async function writeAndRotateHistoryInDirectory(
         const file = await entry.getFile();
         const text = await file.text();
         const parsed = parseSnapshotObject(
-          JSON.parse(text),
+          safeJsonParse<unknown>(text),
           entry.name,
           computeUtf8ByteSize(text)
         );
