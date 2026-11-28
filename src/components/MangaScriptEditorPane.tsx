@@ -21,12 +21,14 @@ import {
   Download,
   Eye,
   GripVertical,
+  ImagePlus,
   LayoutGrid,
   ListTree,
   MessageSquarePlus,
   Plus,
   Sparkles,
   Trash2,
+  Users,
 } from 'lucide-react';
 import type {
   ActiveMode,
@@ -37,9 +39,16 @@ import type {
   MangaSpeech,
   MangaSpeechType,
   ProjectData,
+  ReferenceImage,
   SceneData,
   WorldSettingData,
 } from '../types/scenario';
+import {
+  MAX_SCENE_IMAGES,
+  compressImageFileToDataUrl,
+  deriveImageLabelFromFilename,
+  formatSceneImageTag,
+} from '../utils/imageUtils';
 import {
   MANGA_PAGE_CHAR_WARNING_LIMIT,
   MANGA_PAGE_PANEL_WARNING_LIMIT,
@@ -59,6 +68,11 @@ import {
   parseMangaMarkdown,
   serializeMangaMarkdown,
 } from '../utils/mangaEngine';
+import {
+  MangaPanelImageStrip,
+  PanelImagePickerModal,
+  RichScenePreview,
+} from './SceneImageComponents';
 
 export interface MangaScriptEditorHandle {
   jumpToLine: (line: number) => void;
@@ -150,8 +164,24 @@ export const MangaScriptEditorPane = forwardRef<
     const [copiedCsp, setCopiedCsp] = useState(false);
 
     const markdownTextareaRef = useRef<HTMLTextAreaElement>(null);
+    const panelImageInputRef = useRef<HTMLInputElement>(null);
+    const pendingPanelTargetRef = useRef<{ pageIndex: number; panelIndex: number } | null>(null);
     const pageContainerRefs = useRef<Record<number, HTMLElement | null>>({});
     const lastFocusedRef = useRef<FocusedFieldTarget | null>(null);
+    const [panelImageError, setPanelImageError] = useState<string | null>(null);
+    const [openPanelMenuKey, setOpenPanelMenuKey] = useState<string | null>(null);
+    const [pickerPanelTarget, setPickerPanelTarget] = useState<{
+      pageIndex: number;
+      panelIndex: number;
+      title: string;
+    } | null>(null);
+
+    useEffect(() => {
+      if (!openPanelMenuKey) return;
+      const close = () => setOpenPanelMenuKey(null);
+      document.addEventListener('mousedown', close);
+      return () => document.removeEventListener('mousedown', close);
+    }, [openPanelMenuKey]);
 
     const isAdult = activeMode === 'adult';
     const binding: MangaBindingDirection = scene.mangaBinding ?? 'rtl';
@@ -255,12 +285,17 @@ export const MangaScriptEditorPane = forwardRef<
           }
 
           const target = lastFocusedRef.current;
+          const isImageTag = text.trim().startsWith('[IMG:');
           if (!target || !document.body.contains(target.element)) {
-            // Fallback: append to first page / first panel speech or visual
+            // Fallback: append image tags to P1 コマ1 visual; otherwise first speech or visual
             const nextPages = pages.map((p, idx) => {
               if (idx !== 0) return p;
               const panels = p.panels.map((pn, kIdx) => {
                 if (kIdx !== 0) return pn;
+                if (isImageTag) {
+                  const sep = pn.visual.trim() ? '\n' : '';
+                  return { ...pn, visual: `${pn.visual}${sep}${text}` };
+                }
                 if (pn.speeches.length > 0) {
                   return {
                     ...pn,
@@ -533,10 +568,74 @@ export const MangaScriptEditorPane = forwardRef<
           characters,
           worldSettings,
           activeMode,
-          scene
+          scene,
+          true
         ).content,
       [project, scene, characters, worldSettings, activeMode]
     );
+
+    const handleAttachImageToPanel = async (
+      pageIndex: number,
+      panelIndex: number,
+      fileList: FileList
+    ) => {
+      const files = Array.from(fileList);
+      if (files.length === 0) return;
+      setPanelImageError(null);
+
+      const currentImages = scene.images ?? [];
+      if (currentImages.length >= MAX_SCENE_IMAGES) {
+        setPanelImageError(`シーン画像は1シーンにつき最大${MAX_SCENE_IMAGES}枚まで登録できます。`);
+        return;
+      }
+
+      const slots = MAX_SCENE_IMAGES - currentImages.length;
+      const toProcess = files.slice(0, slots);
+      const created: ReferenceImage[] = [];
+      const errors: string[] = [];
+
+      for (const f of toProcess) {
+        try {
+          const compressed = await compressImageFileToDataUrl(f);
+          created.push({
+            id: `img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+            dataUrl: compressed.dataUrl,
+            label: deriveImageLabelFromFilename(f.name, currentImages.length + created.length + 1),
+            visibility: isAdult ? 'adult_only' : 'common',
+            width: compressed.width,
+            height: compressed.height,
+            createdAt: new Date().toISOString(),
+          });
+        } catch (err) {
+          errors.push(err instanceof Error ? err.message : '画像の読み込みに失敗しました。');
+        }
+      }
+
+      if (created.length > 0) {
+        const tagsBlock = created.map((img) => formatSceneImageTag(img.id, img.label)).join('\n');
+        const nextPages = pages.map((p, pIdx) =>
+          pIdx === pageIndex
+            ? {
+                ...p,
+                panels: p.panels.map((pn, kIdx) => {
+                  if (kIdx !== panelIndex) return pn;
+                  const sep = pn.visual.trim() ? '\n' : '';
+                  return { ...pn, visual: `${pn.visual}${sep}${tagsBlock}` };
+                }),
+              }
+            : p
+        );
+        onUpdateScene({
+          ...scene,
+          body: serializeMangaMarkdown(nextPages),
+          images: [...currentImages, ...created],
+        });
+      }
+
+      if (errors.length > 0) {
+        setPanelImageError(errors[0]);
+      }
+    };
 
     const handleQuickCopyCsp = async () => {
       try {
@@ -1096,10 +1195,75 @@ export const MangaScriptEditorPane = forwardRef<
                               </div>
 
                               {/* Visual / Composition */}
-                              <div className="space-y-1">
-                                <span className="block text-[11px] font-medium text-slate-500">
-                                  構図・絵のト書き（アングル・表情・背景・演出）
-                                </span>
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="block text-[11px] font-medium text-slate-500">
+                                    構図・絵のト書き（アングル・表情・背景・演出）
+                                  </span>
+                                  {(() => {
+                                    const menuKey = `${pageIndex}-${panelIndex}`;
+                                    const isMenuOpen = openPanelMenuKey === menuKey;
+                                    return (
+                                      <div
+                                        className="relative"
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setOpenPanelMenuKey(isMenuOpen ? null : menuKey)
+                                          }
+                                          title="このコマに構図ラフ・キャラ／世界観の参考画像を添付"
+                                          className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                                            isMenuOpen
+                                              ? 'border-slate-300 bg-slate-100 text-slate-900'
+                                              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
+                                          }`}
+                                        >
+                                          <ImagePlus className="h-3 w-3 text-slate-500" />
+                                          <span>参考画像</span>
+                                          <ChevronDown className="h-2.5 w-2.5 text-slate-400" />
+                                        </button>
+
+                                        {isMenuOpen && (
+                                          <div className="absolute right-0 mt-1 w-52 rounded-lg border border-slate-200 bg-white p-1 shadow-lg z-30 space-y-0.5">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setOpenPanelMenuKey(null);
+                                                setPickerPanelTarget({
+                                                  pageIndex,
+                                                  panelIndex,
+                                                  title: `P${pageNum} コマ${panelIndex + 1}`,
+                                                });
+                                              }}
+                                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] font-medium text-slate-800 hover:bg-slate-100"
+                                            >
+                                              <Users className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                                              <span>キャラ・世界観・シーンから選ぶ</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={(scene.images?.length ?? 0) >= MAX_SCENE_IMAGES}
+                                              onClick={() => {
+                                                setOpenPanelMenuKey(null);
+                                                pendingPanelTargetRef.current = {
+                                                  pageIndex,
+                                                  panelIndex,
+                                                };
+                                                panelImageInputRef.current?.click();
+                                              }}
+                                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+                                            >
+                                              <ImagePlus className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                                              <span>PCから画像を追加して添付</span>
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
                                 <AutoGrowTextarea
                                   value={panel.visual}
                                   onChange={(val) =>
@@ -1115,6 +1279,20 @@ export const MangaScriptEditorPane = forwardRef<
                                   }}
                                   placeholder="例: 夕日の差し込む図書室のロングショット。栞の背中越しに蓮が立つ。"
                                   minRows={2}
+                                />
+                                <MangaPanelImageStrip
+                                  visualText={panel.visual}
+                                  scene={scene}
+                                  characters={characters}
+                                  worldSettings={worldSettings}
+                                  activeMode={activeMode}
+                                  onRemoveTag={(rawTag) => {
+                                    const nextVisual = panel.visual
+                                      .replace(rawTag, '')
+                                      .replace(/\n{3,}/g, '\n\n')
+                                      .trim();
+                                    updatePanel(pageIndex, panelIndex, { visual: nextVisual });
+                                  }}
                                 />
                               </div>
 
@@ -1508,12 +1686,78 @@ export const MangaScriptEditorPane = forwardRef<
               </div>
             </div>
             <div className="flex-1 overflow-y-auto px-6 py-5">
-              <pre className="mx-auto max-w-4xl whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-white p-5 font-code text-xs leading-relaxed text-slate-800 select-text">
-                {previewTab === 'script' ? compiledScriptPreview : compiledCspPreview}
-              </pre>
+              {previewTab === 'script' ? (
+                <div className="mx-auto max-w-4xl rounded-xl border border-slate-200 bg-white p-5">
+                  <RichScenePreview
+                    compiledText={compiledScriptPreview}
+                    scene={scene}
+                    characters={characters}
+                    worldSettings={worldSettings}
+                    activeMode={activeMode}
+                    monospace
+                  />
+                </div>
+              ) : (
+                <pre className="mx-auto max-w-4xl whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-white p-5 font-code text-xs leading-relaxed text-slate-800 select-text">
+                  {compiledCspPreview}
+                </pre>
+              )}
             </div>
           </div>
         )}
+
+        <input
+          ref={panelImageInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const target = pendingPanelTargetRef.current;
+            if (target && e.target.files && e.target.files.length > 0) {
+              void handleAttachImageToPanel(target.pageIndex, target.panelIndex, e.target.files);
+            }
+            e.target.value = '';
+          }}
+        />
+        {panelImageError && (
+          <div className="border-t border-rose-200 bg-rose-50 px-4 py-1.5 text-[11px] text-rose-700 flex items-center justify-between">
+            <span>{panelImageError}</span>
+            <button
+              type="button"
+              onClick={() => setPanelImageError(null)}
+              className="text-rose-500 hover:underline text-[10px]"
+            >
+              閉じる
+            </button>
+          </div>
+        )}
+
+        <PanelImagePickerModal
+          open={Boolean(pickerPanelTarget)}
+          panelTitle={pickerPanelTarget?.title ?? ''}
+          scene={scene}
+          characters={characters}
+          worldSettings={worldSettings}
+          activeMode={activeMode}
+          onSelectTag={(tag) => {
+            if (!pickerPanelTarget) return;
+            const { pageIndex: pIdx, panelIndex: kIdx } = pickerPanelTarget;
+            const targetPanel = pages[pIdx]?.panels[kIdx];
+            if (!targetPanel) return;
+            const sep = targetPanel.visual.trim() ? '\n' : '';
+            updatePanel(pIdx, kIdx, { visual: `${targetPanel.visual}${sep}${tag}` });
+          }}
+          onPickFromPc={() => {
+            if (!pickerPanelTarget) return;
+            pendingPanelTargetRef.current = {
+              pageIndex: pickerPanelTarget.pageIndex,
+              panelIndex: pickerPanelTarget.panelIndex,
+            };
+            panelImageInputRef.current?.click();
+          }}
+          onClose={() => setPickerPanelTarget(null)}
+        />
       </div>
     );
   }

@@ -34,6 +34,25 @@
   letter-spacing: 0.04em;
 }
 
+/* Japanese Novel Ruby & Bouten (works in both horizontal and vertical-rl) */
+.novel-bouten {
+  text-emphasis-style: filled dot;
+  -webkit-text-emphasis-style: filled dot;
+  text-emphasis-position: over right;
+  -webkit-text-emphasis-position: over right;
+}
+
+.novel-ruby {
+  ruby-align: center;
+}
+
+.novel-ruby rt {
+  font-size: 0.62em;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  opacity: 0.9;
+}
+
 /* Subtle custom scrollbars for 3-pane IDE */
 ::-webkit-scrollbar {
   width: 7px;

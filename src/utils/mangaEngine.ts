@@ -12,7 +12,11 @@ import type {
   SceneData,
   WorldSettingData,
 } from '../types/scenario';
-import { compileSceneText, isSceneVisibleInMode } from './scenarioEngine';
+import {
+  compileSceneText,
+  expandInlineNewlineTokens,
+  isSceneVisibleInMode,
+} from './scenarioEngine';
 
 export const MANGA_SPEECH_TYPE_META: Record<
   MangaSpeechType,
@@ -117,7 +121,7 @@ function encodeInlineMultiline(text: string): string {
 }
 
 function decodeInlineMultiline(text: string): string {
-  return text.replace(/\s*\/n\s*/g, '\n');
+  return expandInlineNewlineTokens(text);
 }
 
 function stripOuterBracketsForCsp(text: string): string {
@@ -190,10 +194,10 @@ export function parseMangaMarkdown(body: string): MangaPage[] {
           id: makeLocalId('sp'),
           speaker,
           type: openBracket === '（' || openBracket === '(' ? 'monologue' : 'dialogue',
-          text: content,
+          text: decodeInlineMultiline(content),
         });
       } else {
-        visualLines.push(line);
+        visualLines.push(decodeInlineMultiline(line));
       }
     }
     return [
@@ -314,7 +318,8 @@ export function parseMangaMarkdown(body: string): MangaPage[] {
 
     // Fallback: attach unrecognized lines to current panel visual so text is never silently dropped
     const panel = ensurePanel();
-    panel.visual = panel.visual ? `${panel.visual}\n${line}` : line;
+    const decodedFallback = decodeInlineMultiline(line);
+    panel.visual = panel.visual ? `${panel.visual}\n${decodedFallback}` : decodedFallback;
   }
 
   // Ensure every page has at least one panel
@@ -498,7 +503,7 @@ export function compileMangaSpeechText(
     text,
     characters,
     mode,
-    { stripStructureMarkers: true },
+    { stripStructureMarkers: true, stripImageTags: true },
     worldSettings
   ).trim();
 }
@@ -577,7 +582,8 @@ export function exportMangaScriptDocument(
   characters: CharacterData[],
   worldSettings: WorldSettingData[],
   mode: ActiveMode,
-  singleScene?: SceneData
+  singleScene?: SceneData,
+  preserveImageTags = false
 ): { filename: string; content: string } {
   const suffix = mode === 'general' ? '_normal' : '_r18';
   const targetScenes = singleScene
@@ -607,18 +613,28 @@ export function exportMangaScriptDocument(
       const sideInfo = getMangaPageSideInfo(pageNum, binding);
       lines.push(`【P${pageNum}（${sideInfo.shortLabel}）】`);
       if (page.note.trim()) {
-        lines.push(`  狙い・めくり: ${page.note.trim()}`);
+        const compiledNote = compileSceneText(
+          page.note,
+          characters,
+          mode,
+          { stripStructureMarkers: true, stripImageTags: !preserveImageTags },
+          worldSettings
+        );
+        if (compiledNote.trim()) {
+          lines.push(`  狙い・めくり: ${compiledNote.replace(/\n/g, '\n               ')}`);
+        }
       }
       page.panels.forEach((panel, kIdx) => {
         lines.push(`  [コマ${kIdx + 1}]`);
         if (panel.visual.trim()) {
-          const compiledVisual = compileMangaSpeechText(
+          const compiledVisual = compileSceneText(
             panel.visual,
             characters,
-            worldSettings,
-            mode
+            mode,
+            { stripStructureMarkers: true, stripImageTags: !preserveImageTags },
+            worldSettings
           );
-          if (compiledVisual) {
+          if (compiledVisual.trim()) {
             lines.push(`    構図: ${compiledVisual.replace(/\n/g, '\n          ')}`);
           }
         }
@@ -632,12 +648,12 @@ export function exportMangaScriptDocument(
           if (!compiledSpeech) continue;
           const tag = MANGA_SPEECH_TYPE_META[sp.type]?.tag ?? '通常';
           const who = sp.speaker.trim() || '（話者未指定）';
-          lines.push(`    ${who}［${tag}］「${compiledSpeech.replace(/\n/g, ' / ')}」`);
+          lines.push(`    ${who}［${tag}］「${compiledSpeech.replace(/\n/g, '\n      ')}」`);
         }
         if (panel.sfx.trim()) {
           const compiledSfx = compileMangaSpeechText(panel.sfx, characters, worldSettings, mode);
           if (compiledSfx) {
-            lines.push(`    描き文字(SFX): ${compiledSfx}`);
+            lines.push(`    描き文字(SFX): ${compiledSfx.replace(/\n/g, '\n                   ')}`);
           }
         }
       });

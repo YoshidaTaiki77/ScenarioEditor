@@ -11,6 +11,11 @@ import type {
   VisibilityType,
   WorldSettingData,
 } from '../types/scenario';
+import {
+  extractSceneImageTags,
+  resolveSceneImageRef,
+  stripSceneImageTags,
+} from './imageUtils';
 import { proofreadMangaScene } from './mangaEngine';
 
 const STANDARD_COMMON_KEYS = new Set([
@@ -197,6 +202,26 @@ export function resolveWorldField(
 
 export interface CompileOptions {
   stripStructureMarkers?: boolean;
+  stripImageTags?: boolean;
+  expandInlineNewlines?: boolean;
+}
+
+/**
+ * Safely converts standalone `/n` or literal `\n` line-break markers into actual newlines.
+ * Avoids corrupting URLs, file paths, or English words such as `https://example.com/news`,
+ * `/name`, `C:\new`, or uppercase `S/N` / `A/N`, while preserving full-width Japanese indents (`　`).
+ */
+export function expandInlineNewlineTokens(text: string): string {
+  if (!text || (!text.includes('/n') && !text.includes('\\n'))) {
+    return text;
+  }
+  return text.replace(
+    /(?:[ \t]+|(?<![a-zA-Z0-9_:/\\]))((?:\/n|\\n)(?:[ \t]*(?:\/n|\\n))*)(?:[ \t]+|(?![a-zA-Z0-9_]))/g,
+    (_match, tokens: string) => {
+      const count = (tokens.match(/\/n|\\n/g) ?? []).length;
+      return '\n'.repeat(count);
+    }
+  );
 }
 
 export function compileSceneText(
@@ -206,15 +231,32 @@ export function compileSceneText(
   options: CompileOptions = {},
   worldSettings: WorldSettingData[] = []
 ): string {
-  const { stripStructureMarkers = false } = options;
+  const {
+    stripStructureMarkers = false,
+    stripImageTags = false,
+    expandInlineNewlines = true,
+  } = options;
 
   // 1. Resolve [IF_MODE: general|adult] ... [/IF_MODE] blocks
-  // Support nested or multiline blocks cleanly
-  const ifModeRegex = /\[IF_MODE:\s*(general|adult)\s*\]([\s\S]*?)\[\/IF_MODE\]/gi;
-  let output = rawText.replace(ifModeRegex, (_match, blockMode: string, inner: string) => {
+  // First handle standalone multiline blocks so inactive blocks do not leave phantom blank lines
+  const ifModeBlockRegex =
+    /(^[ \t]*)\[IF_MODE:\s*(general|adult)\s*\][ \t]*\r?\n([\s\S]*?)\r?\n?[ \t]*\[\/IF_MODE\][ \t]*(\r?\n)?/gim;
+  let output = rawText.replace(
+    ifModeBlockRegex,
+    (_match, _lead: string, blockMode: string, inner: string, trailingNl?: string) => {
+      const normalized = blockMode.toLowerCase() as ActiveMode;
+      if (normalized === mode) {
+        return inner.replace(/\r?\n$/, '') + (trailingNl ?? '');
+      }
+      return '';
+    }
+  );
+
+  // Then handle any remaining inline [IF_MODE: general|adult]...[/IF_MODE] tags
+  const ifModeInlineRegex = /\[IF_MODE:\s*(general|adult)\s*\]([\s\S]*?)\[\/IF_MODE\]/gi;
+  output = output.replace(ifModeInlineRegex, (_match, blockMode: string, inner: string) => {
     const normalized = blockMode.toLowerCase() as ActiveMode;
     if (normalized === mode) {
-      // Trim a single leading/trailing newline introduced by block tags
       return inner.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
     }
     return '';
@@ -223,6 +265,8 @@ export function compileSceneText(
   // 2. Optionally clean [R18_BLOCK_START: ...] / [R18_BLOCK_END] markers for final text export
   if (stripStructureMarkers) {
     output = output
+      .replace(/^[ \t]*\[R18_BLOCK_START(?::[^\]]*)?\][ \t]*(?:\r?\n|$)/gim, '')
+      .replace(/^[ \t]*\[R18_BLOCK_END\][ \t]*(?:\r?\n|$)/gim, '')
       .replace(/\[R18_BLOCK_START(?::[^\]]*)?\]\r?\n?/gi, '')
       .replace(/\[R18_BLOCK_END\]\r?\n?/gi, '');
   }
@@ -249,8 +293,21 @@ export function compileSceneText(
     }
   );
 
-  // 4. Collapse excessive blank lines caused by stripped blocks
-  output = output.replace(/\n{3,}/g, '\n\n').trim();
+  // 4. Expand standalone `/n` and `\n` inline line-break notations into actual newlines
+  if (expandInlineNewlines) {
+    output = expandInlineNewlineTokens(output);
+  }
+
+  // 5. Optionally strip [IMG: ...] inline image tags for plain-text export / CSP / char counts
+  if (stripImageTags) {
+    output = stripSceneImageTags(output);
+  }
+
+  // 6. Normalize line endings and collapse excessive blank lines, while preserving leading full-width indents (`　`)
+  output = output
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+|\n+$/g, '');
 
   return output;
 }
@@ -395,6 +452,32 @@ export function proofreadScene(
 
     // Skip inactive branch lines for dialogue checks if inside opposing [IF_MODE]
     const isInactiveBranch = currentConditionalMode !== null && currentConditionalMode !== mode;
+
+    // 0. Check [IMG: ...] inline image references
+    if (line.includes('[IMG:')) {
+      const imgTags = extractSceneImageTags(line);
+      for (const tag of imgTags) {
+        const resolvedImg = resolveSceneImageRef(
+          tag.ref,
+          tag.caption,
+          sceneMeta,
+          characters,
+          worldSettings,
+          mode
+        );
+        if (!resolvedImg) {
+          issues.push({
+            id: `syntax-img-${lineNum}-${tag.index}`,
+            line: lineNum,
+            column: tag.index + 1,
+            severity: 'warning',
+            category: 'syntax',
+            message: `参照先の画像 "${tag.ref}" が見つかりません（削除済みまたはID誤り）。`,
+            snippet: tag.raw,
+          });
+        }
+      }
+    }
 
     // 1. Check unresolved {{char.field}} and {{char.callPartner|relationship.targetId}} variables
     const varRegex = /\{\{\s*([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)(?:\.([a-zA-Z0-9_-]+))?\s*\}\}/g;
@@ -759,6 +842,7 @@ export function exportScenarioBundle(
       mode,
       {
         stripStructureMarkers: true,
+        stripImageTags: true,
       },
       worldSettings
     );

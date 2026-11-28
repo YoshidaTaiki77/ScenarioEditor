@@ -1,7 +1,15 @@
-import type { ActiveMode, ReferenceImage, VisibilityType } from '../types/scenario';
+import type {
+  ActiveMode,
+  CharacterData,
+  ReferenceImage,
+  SceneData,
+  VisibilityType,
+  WorldSettingData,
+} from '../types/scenario';
 
 export const MAX_REFERENCE_IMAGES = 6;
 export const MAX_CHARACTER_IMAGES = MAX_REFERENCE_IMAGES;
+export const MAX_SCENE_IMAGES = 10;
 export const MAX_IMAGE_LONG_EDGE = 1200;
 export const MAX_INPUT_IMAGE_BYTES = 15 * 1024 * 1024; // 15 MB
 
@@ -40,13 +48,16 @@ export function filterReferenceImagesForMode(
 
 export const filterCharacterImagesForMode = filterReferenceImagesForMode;
 
-export function normalizeReferenceImages(rawImages: unknown): ReferenceImage[] | undefined {
+export function normalizeReferenceImages(
+  rawImages: unknown,
+  maxCount = MAX_REFERENCE_IMAGES
+): ReferenceImage[] | undefined {
   if (!Array.isArray(rawImages) || rawImages.length === 0) return undefined;
 
   const normalized: ReferenceImage[] = [];
   const seenIds = new Set<string>();
 
-  for (let idx = 0; idx < rawImages.length && normalized.length < MAX_REFERENCE_IMAGES; idx++) {
+  for (let idx = 0; idx < rawImages.length && normalized.length < maxCount; idx++) {
     const rawImg = rawImages[idx] as Partial<ReferenceImage> | null | undefined;
     if (!rawImg || typeof rawImg !== 'object' || !isSafeImageDataUrl(rawImg.dataUrl)) {
       continue;
@@ -236,4 +247,189 @@ export async function compressImageFileToDataUrl(file: File): Promise<Compressed
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+}
+
+export const SCENE_IMAGE_TAG_PATTERN =
+  /\[IMG:\s*([a-zA-Z0-9_:-]+)(?:\s*\|\s*([^\]]*))?\s*\]/g;
+
+export interface ParsedSceneImageTag {
+  raw: string;
+  ref: string;
+  caption: string;
+  index: number;
+}
+
+export function formatSceneImageTag(ref: string, caption?: string): string {
+  const cleanRef = ref.trim().replace(/[^a-zA-Z0-9_:-]/g, '');
+  const cleanCaption = (caption ?? '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[\[\]]/g, '')
+    .trim()
+    .slice(0, 60);
+  return cleanCaption ? `[IMG: ${cleanRef} | ${cleanCaption}]` : `[IMG: ${cleanRef}]`;
+}
+
+export function extractSceneImageTags(text: string): ParsedSceneImageTag[] {
+  if (!text || !text.includes('[IMG:')) return [];
+  const results: ParsedSceneImageTag[] = [];
+  const re = new RegExp(SCENE_IMAGE_TAG_PATTERN.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    results.push({
+      raw: m[0],
+      ref: m[1].trim(),
+      caption: (m[2] ?? '').trim(),
+      index: m.index,
+    });
+  }
+  return results;
+}
+
+/**
+ * Strips [IMG: ...] tags from text (used for plain .txt export, CSP typesetting, and char counts).
+ */
+export function stripSceneImageTags(text: string): string {
+  if (!text || !text.includes('[IMG:')) return text;
+  // Remove standalone image tag lines completely (including their line break)
+  let cleaned = text.replace(
+    /^[ \t]*\[IMG:\s*[a-zA-Z0-9_:-]+(?:\s*\|\s*[^\]]*)?\s*\][ \t]*(?:\r?\n|$)/gm,
+    ''
+  );
+  // Remove any remaining inline tags inside a sentence
+  cleaned = cleaned.replace(new RegExp(SCENE_IMAGE_TAG_PATTERN.source, 'g'), '');
+  return cleaned;
+}
+
+export type ScenePreviewSegment =
+  | { type: 'text'; text: string }
+  | { type: 'image'; raw: string; ref: string; caption: string };
+
+export function splitTextWithSceneImages(text: string): ScenePreviewSegment[] {
+  if (!text) return [];
+  if (!text.includes('[IMG:')) {
+    return [{ type: 'text', text }];
+  }
+
+  const segments: ScenePreviewSegment[] = [];
+  const re = new RegExp(SCENE_IMAGE_TAG_PATTERN.source, 'g');
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > lastIdx) {
+      let chunk = text.slice(lastIdx, m.index);
+      // Trim single trailing newline before a standalone block image to prevent double gaps
+      if (chunk.endsWith('\n')) {
+        chunk = chunk.slice(0, -1);
+      }
+      if (chunk.length > 0) {
+        segments.push({ type: 'text', text: chunk });
+      }
+    }
+
+    segments.push({
+      type: 'image',
+      raw: m[0],
+      ref: m[1].trim(),
+      caption: (m[2] ?? '').trim(),
+    });
+
+    lastIdx = m.index + m[0].length;
+    // Skip a single newline immediately after a standalone image tag
+    if (text[lastIdx] === '\r' && text[lastIdx + 1] === '\n') {
+      lastIdx += 2;
+    } else if (text[lastIdx] === '\n') {
+      lastIdx += 1;
+    }
+  }
+
+  if (lastIdx < text.length) {
+    const rest = text.slice(lastIdx);
+    if (rest.length > 0) {
+      segments.push({ type: 'text', text: rest });
+    }
+  }
+
+  return segments;
+}
+
+export interface ResolvedSceneImage {
+  ref: string;
+  caption: string;
+  source: 'scene' | 'character' | 'world';
+  sourceName: string;
+  image: ReferenceImage;
+  visibleInMode: boolean;
+}
+
+export function resolveSceneImageRef(
+  ref: string,
+  caption: string,
+  scene: SceneData | null | undefined,
+  characters: CharacterData[],
+  worldSettings: WorldSettingData[],
+  mode: ActiveMode
+): ResolvedSceneImage | null {
+  const trimmed = ref.trim();
+  if (!trimmed) return null;
+
+  // 1. Character reference image: char:<charId>:<imgId>
+  if (trimmed.startsWith('char:')) {
+    const parts = trimmed.split(':');
+    if (parts.length >= 3) {
+      const charId = parts[1];
+      const imgId = parts.slice(2).join(':');
+      const char = characters.find((c) => c.id === charId);
+      const img = char?.images?.find((i) => i.id === imgId);
+      if (char && img) {
+        return {
+          ref: trimmed,
+          caption: caption || img.label || char.common.name,
+          source: 'character',
+          sourceName: char.common.name,
+          image: img,
+          visibleInMode: isReferenceImageVisibleInMode(img.visibility, mode),
+        };
+      }
+    }
+    return null;
+  }
+
+  // 2. World reference image: world:<worldId>:<imgId>
+  if (trimmed.startsWith('world:')) {
+    const parts = trimmed.split(':');
+    if (parts.length >= 3) {
+      const worldId = parts[1];
+      const imgId = parts.slice(2).join(':');
+      const worldItem = worldSettings.find((w) => w.id === worldId);
+      const img = worldItem?.images?.find((i) => i.id === imgId);
+      if (worldItem && img) {
+        return {
+          ref: trimmed,
+          caption: caption || img.label || worldItem.name,
+          source: 'world',
+          sourceName: worldItem.name,
+          image: img,
+          visibleInMode: isReferenceImageVisibleInMode(img.visibility, mode),
+        };
+      }
+    }
+    return null;
+  }
+
+  // 3. Scene-local image: <imgId> or scene:<imgId>
+  const localId = trimmed.startsWith('scene:') ? trimmed.slice('scene:'.length) : trimmed;
+  const localImg = scene?.images?.find((i) => i.id === localId);
+  if (localImg) {
+    return {
+      ref: trimmed,
+      caption: caption || localImg.label || 'シーン画像',
+      source: 'scene',
+      sourceName: scene?.title || 'シーン画像',
+      image: localImg,
+      visibleInMode: isReferenceImageVisibleInMode(localImg.visibility, mode),
+    };
+  }
+
+  return null;
 }

@@ -6,6 +6,7 @@ import {
   Check,
   CheckCircle2,
   Copy,
+  CornerDownLeft,
   FileWarning,
   HelpCircle,
   Lock,
@@ -22,7 +23,10 @@ import {
   type SelectedItem,
   type WorldSettingData,
 } from '../types/scenario';
-import { filterReferenceImagesForMode } from '../utils/imageUtils';
+import {
+  filterReferenceImagesForMode,
+  formatSceneImageTag,
+} from '../utils/imageUtils';
 import {
   detectSpeakerOnLine,
   proofreadScene,
@@ -67,10 +71,20 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
   const [worldSearchQuery, setWorldSearchQuery] = useState<string>('');
   const [selectedWorldId, setSelectedWorldId] = useState<string>('');
   const [copiedVarKey, setCopiedVarKey] = useState<string | null>(null);
+  const [insertedImgKey, setInsertedImgKey] = useState<string | null>(null);
   const [selectedImageIdx, setSelectedImageIdx] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [selectedWorldImageIdx, setSelectedWorldImageIdx] = useState(0);
   const [worldLightboxIndex, setWorldLightboxIndex] = useState<number | null>(null);
+
+  const handleInsertReferenceImage = (key: string, ref: string, caption: string) => {
+    const tag = formatSceneImageTag(ref, caption);
+    onInsertSnippet(tag);
+    setInsertedImgKey(key);
+    window.setTimeout(() => {
+      setInsertedImgKey((prev) => (prev === key ? null : prev));
+    }, 1500);
+  };
 
   const isAdult = activeMode === 'adult';
 
@@ -660,6 +674,64 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                                 })}
                               </div>
                             )}
+
+                            {/* Direct quote-insert into scene cursor (案②) */}
+                            {(() => {
+                              const imgRef = `world:${activeWorldItem.id}:${activeImg.id}`;
+                              const caption = activeImg.label
+                                ? `${activeWorldItem.name}（${activeImg.label}）`
+                                : activeWorldItem.name;
+                              const tagText = formatSceneImageTag(imgRef, caption);
+                              const isInserted = insertedImgKey === imgRef;
+                              const isCopied = copiedVarKey === `img:${imgRef}`;
+                              return (
+                                <div className="flex items-stretch gap-1">
+                                  <button
+                                    type="button"
+                                    disabled={!scene}
+                                    onClick={() =>
+                                      handleInsertReferenceImage(imgRef, imgRef, caption)
+                                    }
+                                    title={
+                                      scene
+                                        ? 'この画像を本文のカーソル行へ引用挿入（容量増加なし）'
+                                        : 'シーン編集中に本文のカーソル行へ引用挿入できます'
+                                    }
+                                    className={`flex min-w-0 flex-1 items-center justify-center gap-1 rounded border px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${
+                                      isInserted
+                                        ? 'border-emerald-300 bg-emerald-600 text-white'
+                                        : isAdult
+                                          ? 'border-rose-200 bg-rose-50/70 text-rose-800 hover:bg-rose-700 hover:text-white'
+                                          : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-800 hover:text-white'
+                                    }`}
+                                  >
+                                    {isInserted ? (
+                                      <>
+                                        <Check className="h-3 w-3 shrink-0" />
+                                        <span>カーソル行へ挿入しました</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <CornerDownLeft className="h-3 w-3 shrink-0" />
+                                        <span className="truncate">この画像を本文へ挿入</span>
+                                      </>
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => copyVariableNotation(`img:${imgRef}`, tagText)}
+                                    title={`${tagText} をコピー`}
+                                    className="flex shrink-0 items-center justify-center rounded border border-slate-200 bg-white px-2 text-slate-400 hover:bg-slate-50 hover:text-slate-700 transition-colors"
+                                  >
+                                    {isCopied ? (
+                                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                    ) : (
+                                      <Copy className="h-3.5 w-3.5" />
+                                    )}
+                                  </button>
+                                </div>
+                              );
+                            })()}
                           </div>
                         );
                       })()}
@@ -910,6 +982,64 @@ export const RightInspectorPane: React.FC<RightInspectorPaneProps> = ({
                             })}
                           </div>
                         )}
+
+                        {/* Direct quote-insert into scene cursor (案②) */}
+                        {(() => {
+                          const imgRef = `char:${resolvedChar.id}:${activeImg.id}`;
+                          const caption = activeImg.label
+                            ? `${resolvedChar.name}（${activeImg.label}）`
+                            : resolvedChar.name;
+                          const tagText = formatSceneImageTag(imgRef, caption);
+                          const isInserted = insertedImgKey === imgRef;
+                          const isCopied = copiedVarKey === `img:${imgRef}`;
+                          return (
+                            <div className="flex items-stretch gap-1">
+                              <button
+                                type="button"
+                                disabled={!scene}
+                                onClick={() =>
+                                  handleInsertReferenceImage(imgRef, imgRef, caption)
+                                }
+                                title={
+                                  scene
+                                    ? 'この画像を本文のカーソル行へ引用挿入（容量増加なし）'
+                                    : 'シーン編集中に本文のカーソル行へ引用挿入できます'
+                                }
+                                className={`flex min-w-0 flex-1 items-center justify-center gap-1 rounded border px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${
+                                  isInserted
+                                    ? 'border-emerald-300 bg-emerald-600 text-white'
+                                    : isAdult
+                                      ? 'border-rose-200 bg-rose-50/70 text-rose-800 hover:bg-rose-700 hover:text-white'
+                                      : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-800 hover:text-white'
+                                }`}
+                              >
+                                {isInserted ? (
+                                  <>
+                                    <Check className="h-3 w-3 shrink-0" />
+                                    <span>カーソル行へ挿入しました</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <CornerDownLeft className="h-3 w-3 shrink-0" />
+                                    <span className="truncate">この画像を本文へ挿入</span>
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => copyVariableNotation(`img:${imgRef}`, tagText)}
+                                title={`${tagText} をコピー`}
+                                className="flex shrink-0 items-center justify-center rounded border border-slate-200 bg-white px-2 text-slate-400 hover:bg-slate-50 hover:text-slate-700 transition-colors"
+                              >
+                                {isCopied ? (
+                                  <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                ) : (
+                                  <Copy className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })()}

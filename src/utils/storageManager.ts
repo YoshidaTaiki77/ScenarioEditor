@@ -16,7 +16,7 @@ import {
   type WorldSettingData,
 } from '../types/scenario';
 import { INITIAL_WORKSPACE } from '../data/initialProject';
-import { normalizeReferenceImages } from './imageUtils';
+import { MAX_SCENE_IMAGES, normalizeReferenceImages } from './imageUtils';
 import { parseSceneMarkdown, serializeSceneMarkdown } from './scenarioEngine';
 
 const DB_NAME = 'kotonoha-scenario-db';
@@ -153,6 +153,11 @@ export function sanitizeSceneFolderName(folder?: string): string {
 
 export function getSceneFilename(scene: SceneData): string {
   return sanitizeFilename(scene.filename, scene.sceneId, '.md');
+}
+
+export function getSceneImagesSidecarFilename(scene: SceneData): string {
+  const mdName = getSceneFilename(scene);
+  return mdName.replace(/\.md$/i, '.images.json');
 }
 
 export function getSceneRelativePath(scene: SceneData): string {
@@ -319,6 +324,7 @@ export function normalizeWorkspace(raw: ScenarioWorkspace): ScenarioWorkspace {
       filename: getSceneFilename(s),
       folder: cleanFolder || undefined,
       characters: Array.isArray(s.characters) ? s.characters : [],
+      images: normalizeReferenceImages(s.images, MAX_SCENE_IMAGES),
       format: s.format === 'manga' ? ('manga' as const) : undefined,
       mangaBinding:
         s.mangaBinding === 'ltr'
@@ -845,20 +851,28 @@ export async function writeWorkspaceToDirectory(
 
   const sceneDir = await rootDir.getDirectoryHandle('scenes', { create: true });
   const expectedRootSceneFiles = new Set<string>();
+  const expectedRootSceneImageFiles = new Set<string>();
   const expectedSceneSubdirFiles = new Map<string, Set<string>>();
+  const expectedSceneSubdirImageFiles = new Map<string, Set<string>>();
 
   // Ensure all defined scene folders exist as real directories on disk
   for (const rawFolder of workspace.project.sceneFolders ?? []) {
     const clean = sanitizeSceneFolderName(rawFolder);
     if (clean && !expectedSceneSubdirFiles.has(clean)) {
       expectedSceneSubdirFiles.set(clean, new Set<string>());
+      expectedSceneSubdirImageFiles.set(clean, new Set<string>());
     }
   }
 
   for (const scene of workspace.scenes) {
     const fname = getSceneFilename(scene);
+    const sidecarName = getSceneImagesSidecarFilename(scene);
     const folder = sanitizeSceneFolderName(scene.folder);
     const serialized = serializeSceneMarkdown(scene);
+    const hasImages = Array.isArray(scene.images) && scene.images.length > 0;
+    const serializedImages = hasImages
+      ? JSON.stringify({ sceneId: scene.sceneId, images: scene.images }, null, 2)
+      : null;
 
     if (folder) {
       let set = expectedSceneSubdirFiles.get(folder);
@@ -866,21 +880,40 @@ export async function writeWorkspaceToDirectory(
         set = new Set<string>();
         expectedSceneSubdirFiles.set(folder, set);
       }
+      let imgSet = expectedSceneSubdirImageFiles.get(folder);
+      if (!imgSet) {
+        imgSet = new Set<string>();
+        expectedSceneSubdirImageFiles.set(folder, imgSet);
+      }
       set.add(fname);
       const subDir = await sceneDir.getDirectoryHandle(folder, { create: true });
       await writeTextFile(subDir, fname, serialized);
+      if (serializedImages) {
+        imgSet.add(sidecarName);
+        await writeTextFile(subDir, sidecarName, serializedImages);
+      }
     } else {
       expectedRootSceneFiles.add(fname);
       await writeTextFile(sceneDir, fname, serialized);
+      if (serializedImages) {
+        expectedRootSceneImageFiles.add(sidecarName);
+        await writeTextFile(sceneDir, sidecarName, serializedImages);
+      }
     }
   }
 
   await cleanupStaleFiles(sceneDir, '.md', expectedRootSceneFiles);
+  await cleanupStaleFiles(sceneDir, '.images.json', expectedRootSceneImageFiles);
 
   // Clean up stale files inside active scene subdirectories and remove obsolete subdirectories
   for (const [folderName, expectedFiles] of expectedSceneSubdirFiles.entries()) {
     const subDir = await sceneDir.getDirectoryHandle(folderName, { create: true });
     await cleanupStaleFiles(subDir, '.md', expectedFiles);
+    await cleanupStaleFiles(
+      subDir,
+      '.images.json',
+      expectedSceneSubdirImageFiles.get(folderName) ?? new Set<string>()
+    );
   }
 
   if (typeof sceneDir.removeEntry === 'function') {
@@ -1037,31 +1070,59 @@ export async function readWorkspaceFromDirectory(
 
     const scenes: SceneData[] = [];
     const discoveredSceneFolders: string[] = [];
-    try {
-      const sceneDir = await rootDir.getDirectoryHandle('scenes');
-      for await (const entry of sceneDir.values()) {
+    const readSceneFolderEntries = async (dir: FSDirectoryHandle, folderName?: string) => {
+      const mdScenes: SceneData[] = [];
+      const sidecarByMdName = new Map<string, unknown>();
+
+      for await (const entry of dir.values()) {
         if (entry.kind === 'file' && entry.name.endsWith('.md')) {
-          const f = await entry.getFile();
-          scenes.push({
-            ...parseSceneMarkdown(entry.name, await f.text()),
-            folder: undefined,
-          });
-        } else if (entry.kind === 'directory') {
-          const folderName = sanitizeSceneFolderName(entry.name);
-          if (folderName) {
-            discoveredSceneFolders.push(folderName);
-            for await (const subEntry of entry.values()) {
-              if (subEntry.kind === 'file' && subEntry.name.endsWith('.md')) {
-                const f = await subEntry.getFile();
-                scenes.push({
-                  ...parseSceneMarkdown(subEntry.name, await f.text()),
-                  folder: folderName,
-                });
-              }
+          try {
+            const f = await entry.getFile();
+            mdScenes.push({
+              ...parseSceneMarkdown(entry.name, await f.text()),
+              folder: folderName,
+            });
+          } catch {
+            // Skip unreadable scene markdown
+          }
+        } else if (entry.kind === 'file' && entry.name.endsWith('.images.json')) {
+          try {
+            const f = await entry.getFile();
+            const parsed = safeJsonParse<{ sceneId?: string; images?: unknown } | unknown[]>(
+              await f.text()
+            );
+            const rawImages = Array.isArray(parsed)
+              ? parsed
+              : parsed && typeof parsed === 'object'
+                ? parsed.images
+                : undefined;
+            if (Array.isArray(rawImages)) {
+              const expectedMdName = entry.name.replace(/\.images\.json$/i, '.md').toLowerCase();
+              sidecarByMdName.set(expectedMdName, rawImages);
             }
+          } catch {
+            // Skip malformed scene images sidecar
+          }
+        } else if (entry.kind === 'directory' && folderName === undefined) {
+          const subFolderName = sanitizeSceneFolderName(entry.name);
+          if (subFolderName) {
+            discoveredSceneFolders.push(subFolderName);
+            await readSceneFolderEntries(entry, subFolderName);
           }
         }
       }
+
+      for (const sc of mdScenes) {
+        const key = sc.filename.toLowerCase();
+        const rawImgs = sidecarByMdName.get(key);
+        const normalizedImgs = normalizeReferenceImages(rawImgs, MAX_SCENE_IMAGES);
+        scenes.push(normalizedImgs ? { ...sc, images: normalizedImgs } : sc);
+      }
+    };
+
+    try {
+      const sceneDir = await rootDir.getDirectoryHandle('scenes');
+      await readSceneFolderEntries(sceneDir, undefined);
       scenes.sort((a, b) => getSceneRelativePath(a).localeCompare(getSceneRelativePath(b), 'ja'));
     } catch {
       // Optional folder

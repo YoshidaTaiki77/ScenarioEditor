@@ -234,6 +234,7 @@ export interface SceneData {
   visibility: VisibilityType;
   characters: string[];
   body: string;
+  images?: ReferenceImage[];
   format?: SceneFormat;
   mangaBinding?: MangaBindingDirection;
   mangaStartPage?: number;

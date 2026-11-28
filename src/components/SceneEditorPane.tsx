@@ -7,27 +7,42 @@ import React, {
   useState,
 } from 'react';
 import {
+  AlertCircle,
   AlignJustify,
   BookOpen,
+  ChevronDown,
   Columns2,
   Eye,
   EyeOff,
   FileText,
   Folder,
+  Image as ImageIcon,
+  ImagePlus,
   LayoutPanelTop,
   Maximize2,
   Minimize2,
+  PanelBottom,
+  PanelRight,
   Users,
+  X,
 } from 'lucide-react';
 import type {
   ActiveMode,
   CharacterData,
   PlotData,
   ProjectData,
+  ReferenceImage,
   SceneData,
   VisibilityType,
   WorldSettingData,
 } from '../types/scenario';
+import {
+  MAX_SCENE_IMAGES,
+  compressImageFileToDataUrl,
+  deriveImageLabelFromFilename,
+  filterReferenceImagesForMode,
+  formatSceneImageTag,
+} from '../utils/imageUtils';
 import {
   compileSceneText,
   findPreviousSpeakerPrefix,
@@ -41,6 +56,11 @@ import {
   MangaScriptEditorPane,
   type MangaScriptEditorHandle,
 } from './MangaScriptEditorPane';
+import {
+  RichScenePreview,
+  SceneImageTray,
+  type SceneImageTrayTab,
+} from './SceneImageComponents';
 
 export interface SceneEditorHandle {
   jumpToLine: (line: number) => void;
@@ -120,8 +140,17 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const mangaEditorRef = useRef<MangaScriptEditorHandle>(null);
     const charDropdownRef = useRef<HTMLDivElement>(null);
+    const imageInsertMenuRef = useRef<HTMLDivElement>(null);
+    const quickImageInputRef = useRef<HTMLInputElement>(null);
     const [showPreview, setShowPreview] = useState(true);
+    const [previewLayout, setPreviewLayout] = useState<'bottom' | 'right'>('bottom');
+    const [showImageTray, setShowImageTray] = useState(false);
+    const [imageTrayTab, setImageTrayTab] = useState<SceneImageTrayTab>('scene');
+    const [showImageInsertMenu, setShowImageInsertMenu] = useState(false);
     const [showCharDropdown, setShowCharDropdown] = useState(false);
+    const [isDraggingImage, setIsDraggingImage] = useState(false);
+    const [isUploadingImage, setIsUploadingImage] = useState(false);
+    const [imageErrorMsg, setImageErrorMsg] = useState<string | null>(null);
 
     // Floating Tab Speaker Popup state
     const [speakerPopupOpen, setSpeakerPopupOpen] = useState(false);
@@ -130,6 +159,45 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
 
     const isAdult = activeMode === 'adult';
     const isManga = scene.format === 'manga';
+    const sceneImages = scene.images ?? [];
+
+    const availableLibraryImageCount = useMemo(() => {
+      let count = 0;
+      for (const c of characters) {
+        count += filterReferenceImagesForMode(c.images, activeMode).length;
+      }
+      for (const w of worldSettings) {
+        count += filterReferenceImagesForMode(w.images, activeMode).length;
+      }
+      return count;
+    }, [characters, worldSettings, activeMode]);
+
+    useEffect(() => {
+      setImageErrorMsg(null);
+      setIsDraggingImage(false);
+      setShowImageInsertMenu(false);
+    }, [scene.sceneId]);
+
+    useEffect(() => {
+      if (!showImageInsertMenu) return;
+      const handleOutside = (e: MouseEvent) => {
+        if (
+          imageInsertMenuRef.current &&
+          !imageInsertMenuRef.current.contains(e.target as Node)
+        ) {
+          setShowImageInsertMenu(false);
+        }
+      };
+      const handleEsc = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') setShowImageInsertMenu(false);
+      };
+      document.addEventListener('mousedown', handleOutside);
+      window.addEventListener('keydown', handleEsc);
+      return () => {
+        document.removeEventListener('mousedown', handleOutside);
+        window.removeEventListener('keydown', handleEsc);
+      };
+    }, [showImageInsertMenu]);
 
     // Participating characters ordered first, then others
     const orderedCharacters = useMemo(() => {
@@ -146,6 +214,7 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
           activeMode,
           {
             stripStructureMarkers: false,
+            stripImageTags: false,
           },
           worldSettings
         ),
@@ -153,9 +222,137 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
     );
 
     const charCount = useMemo(
-      () => compiledPreview.replace(/\s+/g, '').length,
-      [compiledPreview]
+      () =>
+        compileSceneText(
+          scene.body,
+          characters,
+          activeMode,
+          {
+            stripStructureMarkers: true,
+            stripImageTags: true,
+          },
+          worldSettings
+        ).replace(/\s+/g, '').length,
+      [scene.body, characters, activeMode, worldSettings]
     );
+
+    const buildBodyWithInsertedBlock = (
+      body: string,
+      block: string,
+      startPos: number,
+      endPos: number
+    ): { nextBody: string; nextCaret: number } => {
+      const before = body.slice(0, startPos);
+      const after = body.slice(endPos);
+      const needsLeadingNewline = before.length > 0 && !before.endsWith('\n');
+      const needsTrailingNewline = after.length > 0 && !after.startsWith('\n');
+      const insertion = `${needsLeadingNewline ? '\n' : ''}${block}${needsTrailingNewline ? '\n' : ''}`;
+      return {
+        nextBody: before + insertion + after,
+        nextCaret: startPos + insertion.length,
+      };
+    };
+
+    const insertImageTagAtCursor = (tagBlock: string) => {
+      if (isManga) {
+        mangaEditorRef.current?.insertAtCursor(tagBlock);
+        return;
+      }
+      const el = textareaRef.current;
+      const start = el ? el.selectionStart : scene.body.length;
+      const end = el ? el.selectionEnd : scene.body.length;
+      const { nextBody, nextCaret } = buildBodyWithInsertedBlock(scene.body, tagBlock, start, end);
+      onUpdateScene({ ...scene, body: nextBody });
+      if (!showPreview) setShowPreview(true);
+      requestAnimationFrame(() => {
+        if (!textareaRef.current) return;
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(nextCaret, nextCaret);
+        onCursorChange(nextCaret);
+      });
+    };
+
+    const handleQuickUploadAndInsert = async (fileList: File[] | FileList) => {
+      const files = Array.from(fileList);
+      if (files.length === 0) return;
+      setImageErrorMsg(null);
+
+      if (sceneImages.length >= MAX_SCENE_IMAGES) {
+        setImageErrorMsg(`シーン画像は1シーンにつき最大${MAX_SCENE_IMAGES}枚まで登録できます。`);
+        return;
+      }
+
+      const slots = MAX_SCENE_IMAGES - sceneImages.length;
+      const toProcess = files.slice(0, slots);
+      const skippedByLimit = files.length - toProcess.length;
+
+      setIsUploadingImage(true);
+      try {
+        const created: ReferenceImage[] = [];
+        const errors: string[] = [];
+
+        for (let i = 0; i < toProcess.length; i++) {
+          const f = toProcess[i];
+          try {
+            const compressed = await compressImageFileToDataUrl(f);
+            created.push({
+              id: `img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+              dataUrl: compressed.dataUrl,
+              label: deriveImageLabelFromFilename(f.name, sceneImages.length + created.length + 1),
+              visibility: isAdult ? 'adult_only' : 'common',
+              width: compressed.width,
+              height: compressed.height,
+              createdAt: new Date().toISOString(),
+            });
+          } catch (err) {
+            errors.push(err instanceof Error ? err.message : '画像の読み込みに失敗しました。');
+          }
+        }
+
+        if (created.length > 0) {
+          const nextImages = [...sceneImages, ...created];
+          const tagsBlock = created
+            .map((img) => formatSceneImageTag(img.id, img.label))
+            .join('\n');
+
+          if (isManga) {
+            onUpdateScene({ ...scene, images: nextImages });
+            // Insert tag on next frame after images state commits
+            requestAnimationFrame(() => {
+              mangaEditorRef.current?.insertAtCursor(tagsBlock);
+            });
+          } else {
+            const el = textareaRef.current;
+            const start = el ? el.selectionStart : scene.body.length;
+            const end = el ? el.selectionEnd : scene.body.length;
+            const { nextBody, nextCaret } = buildBodyWithInsertedBlock(
+              scene.body,
+              tagsBlock,
+              start,
+              end
+            );
+            onUpdateScene({ ...scene, body: nextBody, images: nextImages });
+            if (!showPreview) setShowPreview(true);
+            requestAnimationFrame(() => {
+              if (!textareaRef.current) return;
+              textareaRef.current.focus();
+              textareaRef.current.setSelectionRange(nextCaret, nextCaret);
+              onCursorChange(nextCaret);
+            });
+          }
+        }
+
+        if (errors.length > 0) {
+          setImageErrorMsg(errors[0]);
+        } else if (skippedByLimit > 0) {
+          setImageErrorMsg(
+            `上限（最大${MAX_SCENE_IMAGES}枚）に達したため、${skippedByLimit}枚は追加されませんでした。`
+          );
+        }
+      } finally {
+        setIsUploadingImage(false);
+      }
+    };
 
     useImperativeHandle(ref, () => ({
       jumpToLine: (line: number) => {
@@ -179,6 +376,10 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
         onCursorChange(offset);
       },
       insertAtCursor: (text: string, placeCaretBefore?: string) => {
+        if (text.trim().startsWith('[IMG:')) {
+          insertImageTagAtCursor(text.trim());
+          return;
+        }
         if (isManga) {
           mangaEditorRef.current?.insertAtCursor(text, placeCaretBefore);
           return;
@@ -537,6 +738,133 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
 
             {/* Workspace View Toggles */}
             <div className="flex flex-wrap items-center gap-1.5 min-w-0 max-w-full">
+              <input
+                ref={quickImageInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    void handleQuickUploadAndInsert(e.target.files);
+                  }
+                  e.target.value = '';
+                }}
+              />
+
+              {/* Unified Image Insert Dropdown (案①) */}
+              <div className="relative" ref={imageInsertMenuRef}>
+                <button
+                  type="button"
+                  disabled={isUploadingImage}
+                  onClick={() => setShowImageInsertMenu((v) => !v)}
+                  title="PCから画像追加、またはキャラ・世界観の登録済み画像をカーソル行へ引用挿入"
+                  className={`flex items-center gap-1 rounded border px-2 @lg:px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap disabled:opacity-45 ${
+                    showImageInsertMenu
+                      ? isAdult
+                        ? 'border-rose-300 bg-rose-50 text-rose-800'
+                        : 'border-slate-300 bg-slate-100 text-slate-900'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <ImagePlus className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                  <span>{isUploadingImage ? '挿入中...' : '画像挿入'}</span>
+                  <ChevronDown className="h-3 w-3 shrink-0 text-slate-400" />
+                </button>
+
+                {showImageInsertMenu && (
+                  <div className="absolute left-0 sm:left-auto sm:right-0 mt-1 w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg z-30 space-y-0.5">
+                    <button
+                      type="button"
+                      disabled={sceneImages.length >= MAX_SCENE_IMAGES}
+                      onClick={() => {
+                        setShowImageInsertMenu(false);
+                        quickImageInputRef.current?.click();
+                      }}
+                      className="flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-slate-50 disabled:opacity-45"
+                    >
+                      <ImagePlus className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-medium text-slate-800">
+                          PCから画像を追加して挿入
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          ファイル選択（残り {Math.max(0, MAX_SCENE_IMAGES - sceneImages.length)}/{MAX_SCENE_IMAGES}枚）
+                        </div>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowImageInsertMenu(false);
+                        setImageTrayTab('library');
+                        setShowImageTray(true);
+                      }}
+                      className="flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-slate-50"
+                    >
+                      <Users className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-xs font-medium text-slate-800">
+                            キャラ・世界観から引用挿入
+                          </span>
+                          <span className="rounded bg-slate-100 px-1.5 py-0.5 font-code text-[10px] text-slate-600 tabular-nums">
+                            {availableLibraryImageCount}枚
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          登録済みの設定画像を容量増加なしで挿入
+                        </div>
+                      </div>
+                    </button>
+
+                    <div className="my-1 border-t border-slate-100" />
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowImageInsertMenu(false);
+                        setImageTrayTab('scene');
+                        setShowImageTray(true);
+                      }}
+                      className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                    >
+                      <span className="flex items-center gap-2">
+                        <ImageIcon className="h-3.5 w-3.5 text-slate-400" />
+                        <span>このシーンの画像を管理</span>
+                      </span>
+                      <span className="font-code text-[10px] text-slate-400 tabular-nums">
+                        {sceneImages.length}/{MAX_SCENE_IMAGES}
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!showImageTray && sceneImages.length === 0 && availableLibraryImageCount > 0) {
+                    setImageTrayTab('library');
+                  }
+                  setShowImageTray((v) => !v);
+                }}
+                title="シーン画像・引用画像トレイを開閉"
+                className={`flex items-center gap-1 rounded border px-2 @lg:px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
+                  showImageTray
+                    ? isAdult
+                      ? 'border-rose-300 bg-rose-50 text-rose-800'
+                      : 'border-slate-300 bg-slate-100 text-slate-900'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+                <span>
+                  画像管理{sceneImages.length > 0 ? ` (${sceneImages.length})` : ''}
+                </span>
+              </button>
+
               <button
                 type="button"
                 onClick={onToggleSplitView}
@@ -594,6 +922,44 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
             </div>
           </div>
         </div>
+
+        {/* Collapsible Scene Image Tray */}
+        {showImageTray && (
+          <SceneImageTray
+            scene={scene}
+            characters={characters}
+            worldSettings={worldSettings}
+            activeMode={activeMode}
+            activeTab={imageTrayTab}
+            onChangeActiveTab={setImageTrayTab}
+            onUpdateSceneImages={(nextImages) =>
+              onUpdateScene({
+                ...scene,
+                images: nextImages.length > 0 ? nextImages : undefined,
+              })
+            }
+            onInsertImageTag={insertImageTagAtCursor}
+            onClose={() => setShowImageTray(false)}
+          />
+        )}
+
+        {/* Quick upload error banner */}
+        {imageErrorMsg && (
+          <div className="flex items-center justify-between gap-2 border-b border-rose-200 bg-rose-50 px-4 py-1.5 text-[11px] text-rose-800">
+            <span className="flex items-center gap-1.5 min-w-0">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0 text-rose-600" />
+              <span className="truncate">{imageErrorMsg}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setImageErrorMsg(null)}
+              aria-label="エラーを閉じる"
+              className="rounded p-0.5 text-rose-500 hover:bg-rose-100"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
 
         {/* Main Split Container (Optional Plot Left/Top + Script Right/Bottom) */}
         <div className="flex min-h-0 flex-1 flex-col @3xl:flex-row overflow-hidden">
@@ -663,112 +1029,205 @@ export const SceneEditorPane = forwardRef<SceneEditorHandle, SceneEditorPaneProp
               </span>
             </div>
 
-            {/* Textarea Manuscript Area */}
-            <div className="relative flex-1 min-h-0 overflow-hidden bg-white">
-              <textarea
-                ref={textareaRef}
-                value={scene.body}
-                onChange={(e) => {
-                  onUpdateScene({ ...scene, body: e.target.value });
-                  syncCursor();
+            {/* Editor + Live Preview Split (Bottom or Right) */}
+            <div
+              className={`flex min-h-0 flex-1 overflow-hidden ${
+                showPreview && previewLayout === 'right' ? 'flex-col @2xl:flex-row' : 'flex-col'
+              }`}
+            >
+              {/* Textarea Manuscript Area */}
+              <div
+                onDragOver={(e) => {
+                  if (!e.dataTransfer.types.includes('Files')) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'copy';
+                  if (!isDraggingImage) setIsDraggingImage(true);
                 }}
-                onClick={syncCursor}
-                onKeyUp={syncCursor}
-                onSelect={syncCursor}
-                onKeyDown={handleKeyDown}
-                spellCheck={false}
-                placeholder="ここからシナリオを執筆できます。行頭で Tab キーを押すと登場キャラ一覧が表示されます。"
-                className={`h-full w-full resize-none border-0 bg-white p-6 text-[15px] text-slate-900 focus:outline-none ${
-                  verticalWriting
-                    ? 'writing-vertical font-editorial overflow-x-auto overflow-y-hidden leading-loose'
-                    : 'font-editorial leading-[1.9] overflow-y-auto'
+                onDragLeave={(e) => {
+                  if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                  setIsDraggingImage(false);
+                }}
+                onDrop={(e) => {
+                  if (!e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+                  const imageFiles = Array.from(e.dataTransfer.files).filter(
+                    (f) => f.type.startsWith('image/') || /\.svg$/i.test(f.name)
+                  );
+                  if (imageFiles.length === 0) return;
+                  e.preventDefault();
+                  setIsDraggingImage(false);
+                  void handleQuickUploadAndInsert(imageFiles);
+                }}
+                className={`relative flex-1 min-h-0 min-w-0 overflow-hidden bg-white transition-colors ${
+                  isDraggingImage ? 'ring-2 ring-inset ring-slate-500 bg-slate-50/70' : ''
                 }`}
-              />
+              >
+                <textarea
+                  ref={textareaRef}
+                  value={scene.body}
+                  onChange={(e) => {
+                    onUpdateScene({ ...scene, body: e.target.value });
+                    syncCursor();
+                  }}
+                  onClick={syncCursor}
+                  onKeyUp={syncCursor}
+                  onSelect={syncCursor}
+                  onKeyDown={handleKeyDown}
+                  spellCheck={false}
+                  placeholder="ここからシナリオを執筆できます。行頭で Tab キーを押すと登場キャラ一覧が表示されます。画像をここへドロップするとカーソル行に挿入できます。"
+                  className={`h-full w-full resize-none border-0 bg-transparent p-6 text-[15px] text-slate-900 focus:outline-none ${
+                    verticalWriting
+                      ? 'writing-vertical font-editorial overflow-x-auto overflow-y-hidden leading-loose'
+                      : 'font-editorial leading-[1.9] overflow-y-auto'
+                  }`}
+                />
 
-              {/* Floating Character Picker Popup on Line-Start Tab */}
-              {speakerPopupOpen && (
-                <div className="absolute left-6 top-6 z-30 w-64 rounded-md border border-slate-300 bg-white shadow-lg">
-                  <div className="flex items-center justify-between border-b border-slate-100 px-3 py-1.5 text-[11px] text-slate-500">
-                    <span>発言キャラクターを選択</span>
-                    <span className="font-code">↑↓ / Enter</span>
+                {isDraggingImage && (
+                  <div className="pointer-events-none absolute inset-3 flex items-center justify-center rounded-lg border-2 border-dashed border-slate-500 bg-white/85 backdrop-blur-xs">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
+                      <ImagePlus className="h-4 w-4 text-slate-600" />
+                      <span>ドロップしてカーソル行へ画像を挿入</span>
+                    </div>
                   </div>
-                  <div className="max-h-56 overflow-y-auto py-1">
-                    {orderedCharacters.map((char, idx) => {
-                      const active = idx === speakerPopupIndex;
-                      return (
+                )}
+
+                {/* Floating Character Picker Popup on Line-Start Tab */}
+                {speakerPopupOpen && (
+                  <div className="absolute left-6 top-6 z-30 w-64 rounded-md border border-slate-300 bg-white shadow-lg">
+                    <div className="flex items-center justify-between border-b border-slate-100 px-3 py-1.5 text-[11px] text-slate-500">
+                      <span>発言キャラクターを選択</span>
+                      <span className="font-code">↑↓ / Enter</span>
+                    </div>
+                    <div className="max-h-56 overflow-y-auto py-1">
+                      {orderedCharacters.map((char, idx) => {
+                        const active = idx === speakerPopupIndex;
+                        return (
+                          <button
+                            key={char.id}
+                            type="button"
+                            onMouseEnter={() => setSpeakerPopupIndex(idx)}
+                            onClick={() =>
+                              insertSpeakerDialogue(char.shortName, speakerInsertPos, false)
+                            }
+                            className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs transition-colors ${
+                              active
+                                ? isAdult
+                                  ? 'bg-rose-50 text-rose-900 font-medium'
+                                  : 'bg-slate-100 text-slate-900 font-medium'
+                                : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span>
+                              {char.shortName}「」
+                              <span className="ml-2 text-[11px] text-slate-400">
+                                {char.common.name}
+                              </span>
+                            </span>
+                            <span className="font-code text-[10px] text-slate-400">
+                              {char.id}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Real-time Compiled Mode Preview (Bottom or Right Split) */}
+              {showPreview && (
+                <div
+                  className={`flex shrink-0 flex-col overflow-hidden ${
+                    previewLayout === 'right'
+                      ? 'h-[45%] border-t @2xl:h-auto @2xl:w-1/2 @2xl:border-t-0 @2xl:border-l'
+                      : 'h-60 border-t'
+                  } ${
+                    isAdult
+                      ? 'border-rose-200 bg-rose-50/30'
+                      : 'border-slate-200 bg-slate-50/60'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/70 px-3 @lg:px-4 py-1.5 text-[11px]">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-semibold text-slate-700 truncate">
+                        リアルタイムプレビュー
+                      </span>
+                      <span aria-hidden="true" className="hidden sm:inline text-slate-300">
+                        ·
+                      </span>
+                      <span
+                        className={`hidden sm:inline truncate ${
+                          isAdult ? 'font-medium text-rose-700' : 'text-slate-500'
+                        }`}
+                      >
+                        {isAdult ? 'R18モード展開中' : '一般用モード展開中'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-code text-slate-400 tabular-nums">
+                        {compiledPreview.trim().length === 0
+                          ? 0
+                          : compiledPreview.split('\n').length}{' '}
+                        行
+                      </span>
+                      <div
+                        role="group"
+                        aria-label="プレビュー配置の切替"
+                        className="inline-flex items-center rounded border border-slate-200 bg-white p-0.5"
+                      >
                         <button
-                          key={char.id}
                           type="button"
-                          onMouseEnter={() => setSpeakerPopupIndex(idx)}
-                          onClick={() =>
-                            insertSpeakerDialogue(char.shortName, speakerInsertPos, false)
-                          }
-                          className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs transition-colors ${
-                            active
+                          onClick={() => setPreviewLayout('bottom')}
+                          title="プレビューを下部に表示"
+                          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+                            previewLayout === 'bottom'
                               ? isAdult
-                                ? 'bg-rose-50 text-rose-900 font-medium'
-                                : 'bg-slate-100 text-slate-900 font-medium'
-                              : 'text-slate-700 hover:bg-slate-50'
+                                ? 'bg-rose-700 text-white'
+                                : 'bg-slate-800 text-white'
+                              : 'text-slate-500 hover:text-slate-800'
                           }`}
                         >
-                          <span>
-                            {char.shortName}「」
-                            <span className="ml-2 text-[11px] text-slate-400">
-                              {char.common.name}
-                            </span>
-                          </span>
-                          <span className="font-code text-[10px] text-slate-400">
-                            {char.id}
-                          </span>
+                          <PanelBottom className="h-3 w-3" />
+                          <span>下</span>
                         </button>
-                      );
-                    })}
+                        <button
+                          type="button"
+                          onClick={() => setPreviewLayout('right')}
+                          title="プレビューを右側に並べて表示"
+                          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+                            previewLayout === 'right'
+                              ? isAdult
+                                ? 'bg-rose-700 text-white'
+                                : 'bg-slate-800 text-white'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          <PanelRight className="h-3 w-3" />
+                          <span>右</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    className={`flex-1 p-4 text-sm text-slate-800 ${
+                      verticalWriting
+                        ? 'writing-vertical font-editorial overflow-x-auto overflow-y-hidden'
+                        : 'overflow-y-auto'
+                    }`}
+                  >
+                    <RichScenePreview
+                      compiledText={compiledPreview}
+                      scene={scene}
+                      characters={characters}
+                      worldSettings={worldSettings}
+                      activeMode={activeMode}
+                      verticalWriting={verticalWriting}
+                    />
                   </div>
                 </div>
               )}
             </div>
-
-            {/* Real-time Compiled Mode Preview */}
-            {showPreview && (
-              <div
-                className={`flex h-52 shrink-0 flex-col border-t ${
-                  isAdult
-                    ? 'border-rose-200 bg-rose-50/30'
-                    : 'border-slate-200 bg-slate-50/60'
-                }`}
-              >
-                <div className="flex items-center justify-between border-b border-slate-200/70 px-4 py-1.5 text-[11px]">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-slate-700">
-                      リアルタイム・コンパイルプレビュー
-                    </span>
-                    <span aria-hidden="true" className="text-slate-300">
-                      ·
-                    </span>
-                    <span className={isAdult ? 'font-medium text-rose-700' : 'text-slate-500'}>
-                      {isAdult
-                        ? 'R18モード変数 & [IF_MODE: adult] 展開中'
-                        : '一般用モード変数 & [IF_MODE: general] 展開中'}
-                    </span>
-                  </div>
-                  <span className="font-code text-slate-400 tabular-nums">
-                    {compiledPreview.split('\n').length} 行
-                  </span>
-                </div>
-
-                <div
-                  className={`flex-1 p-4 text-sm text-slate-800 ${
-                    verticalWriting
-                      ? 'writing-vertical font-editorial overflow-x-auto overflow-y-hidden whitespace-pre-wrap'
-                      : 'font-editorial leading-[1.85] overflow-y-auto whitespace-pre-wrap'
-                  }`}
-                >
-                  {compiledPreview || (
-                    <span className="text-slate-400">（本文を入力すると展開結果が表示されます）</span>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
           )}
         </div>
