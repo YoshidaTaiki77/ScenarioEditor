@@ -11,7 +11,6 @@ import {
   ChevronRight,
   Clapperboard,
   Clock,
-  Download,
   Eye,
   FilePlus2,
   Folder,
@@ -45,7 +44,7 @@ import {
   reassignChartSlotsAfterListReorder,
 } from '../utils/plotChartLayout';
 import { getPageCountGuide, parseMangaMarkdown } from '../utils/mangaEngine';
-import { getPlotFilename, triggerDownload } from '../utils/storage';
+import { getPlotFilename } from '../utils/storage';
 import { PlotFlowChart } from './PlotFlowChart';
 import { SceneLinkCombobox, type SceneUsageEntry } from './SceneLinkCombobox';
 
@@ -282,11 +281,6 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
     if (normalized !== currentFilename) {
       onUpdatePlot({ ...plot, filename: normalized });
     }
-  };
-
-  const handleDownloadJson = () => {
-    const payload = JSON.stringify({ ...plot, filename: currentFilename }, null, 2);
-    triggerDownload(currentFilename, payload, 'application/json;charset=utf-8');
   };
 
   const isDimmed = (vis: VisibilityType) => {
@@ -704,16 +698,6 @@ export const PlotBoard: React.FC<PlotBoardProps> = ({
                 </select>
               </label>
             </div>
-
-            <button
-              type="button"
-              onClick={handleDownloadJson}
-              title={`${currentFilename} をダウンロード保存`}
-              className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0"
-            >
-              <Download className="h-3.5 w-3.5" />
-              <span>JSON保存</span>
-            </button>
           </div>
         )}
 

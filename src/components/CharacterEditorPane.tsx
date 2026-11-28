@@ -1,7 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
-  Download,
   Lock,
   Pencil,
   Plus,
@@ -26,7 +25,7 @@ import {
   type DualProfileFieldDef,
   type StandardCharacterCategory,
 } from '../types/scenario';
-import { getCharacterFilename, triggerDownload } from '../utils/storageManager';
+import { getCharacterFilename } from '../utils/storageManager';
 import { CharacterImageGallery } from './CharacterImageGallery';
 
 interface AutoGrowTextareaProps {
@@ -114,6 +113,7 @@ interface CharacterEditorPaneProps {
   onRemoveDefaultCommonField: (key: string) => void;
   onRemoveDefaultDualField: (key: string) => void;
   onMoveCharacterToFolder: (characterId: string, folder?: string) => void;
+  onRequestDeleteCharacter: (characterId: string) => void;
 }
 
 interface StandardOptionalFieldMeta {
@@ -243,6 +243,7 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
   onRemoveDefaultCommonField,
   onRemoveDefaultDualField,
   onMoveCharacterToFolder,
+  onRequestDeleteCharacter,
 }) => {
   const isAdult = activeMode === 'adult';
   const currentFilename = getCharacterFilename(character);
@@ -576,11 +577,6 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
     if (normalized !== currentFilename) {
       onUpdateCharacter({ ...character, filename: normalized });
     }
-  };
-
-  const handleDownloadJson = () => {
-    const payload = JSON.stringify({ ...character, filename: currentFilename }, null, 2);
-    triggerDownload(currentFilename, payload, 'application/json;charset=utf-8');
   };
 
   const updateCommon = (patch: Partial<CharacterCommon>) => {
@@ -998,15 +994,15 @@ export const CharacterEditorPane: React.FC<CharacterEditorPaneProps> = ({
             </h2>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={handleDownloadJson}
-              title={`${currentFilename} をダウンロード保存`}
-              className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0"
+              onClick={() => onRequestDeleteCharacter(character.id)}
+              title="このキャラクターを削除"
+              className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-500 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 transition-colors"
             >
-              <Download className="h-3.5 w-3.5" />
-              <span>JSON保存</span>
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>削除</span>
             </button>
           </div>
         </div>

@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { BookOpen, FilePlus2, Folder, GitBranch, Layers, User, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { BookOpen, FilePlus2, FileUp, Folder, GitBranch, Layers, User, X } from 'lucide-react';
 import type { ActiveMode, CharacterData, PlotScope } from '../types/scenario';
 import { sanitizeSceneFolderName } from '../utils/storage';
 
@@ -24,6 +24,7 @@ interface NewPlotModalProps {
   sceneFolders: string[];
   onClose: () => void;
   onCreate: (payload: CreatePlotPayload) => void;
+  onImportPlotFiles?: (files: FileList | File[]) => void;
 }
 
 const SCOPE_OPTIONS: Array<{
@@ -47,7 +48,9 @@ export const NewPlotModal: React.FC<NewPlotModalProps> = ({
   sceneFolders,
   onClose,
   onCreate,
+  onImportPlotFiles,
 }) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const isAdult = activeMode === 'adult';
   const [scope, setScope] = useState<PlotScope>('chapter');
   const [targetCharId, setTargetCharId] = useState<string>(characters[0]?.id ?? '');
@@ -374,22 +377,53 @@ export const NewPlotModal: React.FC<NewPlotModalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-            >
-              キャンセル
-            </button>
-            <button
-              type="submit"
-              className={`rounded-md px-4 py-1.5 text-xs font-medium text-white transition-colors ${
-                isAdult ? 'bg-rose-700 hover:bg-rose-800' : 'bg-slate-800 hover:bg-slate-900'
-              }`}
-            >
-              プロットを作成
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+            {onImportPlotFiles ? (
+              <div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) {
+                      onImportPlotFiles(Array.from(e.target.files));
+                      onClose();
+                    }
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-100 transition-colors"
+                >
+                  <FileUp className="h-3.5 w-3.5 text-slate-500" />
+                  <span>既存ファイル(.json)から読み込む</span>
+                </button>
+              </div>
+            ) : (
+              <div />
+            )}
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              >
+                キャンセル
+              </button>
+              <button
+                type="submit"
+                className={`rounded-md px-4 py-1.5 text-xs font-medium text-white transition-colors ${
+                  isAdult ? 'bg-rose-700 hover:bg-rose-800' : 'bg-slate-800 hover:bg-slate-900'
+                }`}
+              >
+                プロットを作成
+              </button>
+            </div>
           </div>
         </form>
       </div>

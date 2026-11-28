@@ -1,10 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
+  AlertCircle,
   BookOpen,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   FileText,
+  FileUp,
   Folder,
   FolderPlus,
   GripVertical,
@@ -26,6 +29,7 @@ import type {
   VisibilityType,
   WorldSettingData,
 } from '../types/scenario';
+import type { ImportEntityType, ImportNotification } from '../utils/fileImporter';
 import {
   getCharacterFilename,
   getPlotFilename,
@@ -61,6 +65,7 @@ interface LeftTreePaneProps {
     side: 'before' | 'after'
   ) => void;
   onAddCharacter: (folder?: string) => void;
+  onRequestDeleteCharacter: (characterId: string) => void;
   onCreateCharacterFolder: (name: string) => { ok: boolean; error?: string };
   onRenameCharacterFolder: (oldName: string, newName: string) => { ok: boolean; error?: string };
   onDeleteCharacterFolder: (name: string) => void;
@@ -94,6 +99,9 @@ interface LeftTreePaneProps {
   onAddPlot: () => void;
   onDeletePlot: (plotId: string) => void;
   onReorderPlot: (sourcePlotId: string, targetPlotId: string, side: 'before' | 'after') => void;
+  onImportFiles: (type: ImportEntityType, files: FileList | File[], targetFolder?: string) => void;
+  importNotification: ImportNotification | null;
+  onDismissImportNotification: () => void;
   isOverlay?: boolean;
   onClose?: () => void;
 }
@@ -131,6 +139,7 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
   onReorderScene,
   onReorderSceneFolder,
   onAddCharacter,
+  onRequestDeleteCharacter,
   onCreateCharacterFolder,
   onRenameCharacterFolder,
   onDeleteCharacterFolder,
@@ -148,6 +157,9 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
   onAddPlot,
   onDeletePlot,
   onReorderPlot,
+  onImportFiles,
+  importNotification,
+  onDismissImportNotification,
   isOverlay = false,
   onClose,
 }) => {
@@ -243,7 +255,92 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
     side: 'before' | 'after';
   } | null>(null);
 
+  const jsonFileInputRef = useRef<HTMLInputElement>(null);
+  const sceneFileInputRef = useRef<HTMLInputElement>(null);
+  const pendingImportTargetRef = useRef<{ type: ImportEntityType; folder?: string }>({
+    type: 'character',
+  });
+  const [externalFileDropTarget, setExternalFileDropTarget] = useState<{
+    type: ImportEntityType;
+    folder?: string;
+  } | null>(null);
+
   const isAdult = activeMode === 'adult';
+
+  const openImportPicker = (type: ImportEntityType, folder?: string) => {
+    pendingImportTargetRef.current = { type, folder };
+    if (type === 'scene') {
+      sceneFileInputRef.current?.click();
+    } else {
+      jsonFileInputRef.current?.click();
+    }
+  };
+
+  const isExternalFileDrag = (e: React.DragEvent): boolean => {
+    if (
+      draggingCharId ||
+      draggingCharFolder ||
+      draggingWorldId ||
+      draggingWorldFolder ||
+      draggingPlotId ||
+      draggingSceneId ||
+      draggingSceneFolder
+    ) {
+      return false;
+    }
+    return Array.from(e.dataTransfer.types ?? []).includes('Files');
+  };
+
+  const isExternalDropActive = (type: ImportEntityType, folder?: string): boolean => {
+    if (!externalFileDropTarget) return false;
+    return externalFileDropTarget.type === type && externalFileDropTarget.folder === folder;
+  };
+
+  const handleExternalDragOver = (
+    e: React.DragEvent,
+    type: ImportEntityType,
+    folder?: string
+  ): boolean => {
+    if (!isExternalFileDrag(e)) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+    if (
+      externalFileDropTarget?.type !== type ||
+      externalFileDropTarget?.folder !== folder
+    ) {
+      setExternalFileDropTarget({ type, folder });
+    }
+    return true;
+  };
+
+  const handleExternalDragLeave = (
+    e: React.DragEvent,
+    type: ImportEntityType,
+    folder?: string
+  ) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+      setExternalFileDropTarget((cur) =>
+        cur && cur.type === type && cur.folder === folder ? null : cur
+      );
+    }
+  };
+
+  const handleExternalDrop = (
+    e: React.DragEvent,
+    type: ImportEntityType,
+    folder?: string
+  ): boolean => {
+    if (!isExternalFileDrag(e)) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    setExternalFileDropTarget(null);
+    const dropped = Array.from(e.dataTransfer.files ?? []);
+    if (dropped.length > 0) {
+      onImportFiles(type, dropped, folder);
+    }
+    return true;
+  };
 
   const toggleFolder = (key: keyof typeof openFolders) => {
     setOpenFolders((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -625,7 +722,7 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
         <button
           type="button"
           onClick={() => onSelect({ type: 'character', id: char.id })}
-          className={`flex min-w-0 flex-1 items-center justify-between gap-2 py-1.5 pr-2 text-left ${
+          className={`flex min-w-0 flex-1 items-center justify-between gap-2 py-1.5 pr-1.5 text-left ${
             canDragCharacter ? 'pl-1' : 'pl-2'
           }`}
         >
@@ -633,9 +730,18 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
             <User className="h-3.5 w-3.5 shrink-0 text-slate-400" />
             <span className="truncate">{char.common.name}</span>
           </span>
-          <span className="font-code text-[10px] text-slate-400 shrink-0 truncate max-w-[84px]">
+          <span className="font-code text-[10px] text-slate-400 shrink-0 truncate max-w-[74px] group-hover:hidden">
             {getCharacterFilename(char)}
           </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onRequestDeleteCharacter(char.id)}
+          title="このキャラクターを削除"
+          className="mr-1 hidden rounded p-1 text-slate-400 hover:bg-slate-300/60 hover:text-rose-600 group-hover:block shrink-0"
+        >
+          <Trash2 className="h-3 w-3" />
         </button>
       </div>
     );
@@ -805,9 +911,105 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
         </div>
       </div>
 
+      {/* Hidden file inputs for existing-file imports */}
+      <input
+        ref={jsonFileInputRef}
+        type="file"
+        accept=".json,application/json"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          const files = e.target.files ? Array.from(e.target.files) : [];
+          if (files.length > 0) {
+            const { type, folder } = pendingImportTargetRef.current;
+            onImportFiles(type, files, folder);
+          }
+          e.target.value = '';
+        }}
+      />
+      <input
+        ref={sceneFileInputRef}
+        type="file"
+        accept=".md,.txt,.json,text/markdown,text/plain,application/json"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          const files = e.target.files ? Array.from(e.target.files) : [];
+          if (files.length > 0) {
+            const { folder } = pendingImportTargetRef.current;
+            onImportFiles('scene', files, folder);
+          }
+          e.target.value = '';
+        }}
+      />
+
+      {/* Import Result Notification Banner (Option 3) */}
+      {importNotification && (
+        <div
+          role="status"
+          className={`mx-2 mt-2 rounded-md border px-2.5 py-2 text-[11px] leading-snug ${
+            importNotification.kind === 'success'
+              ? 'border-emerald-200 bg-emerald-50/90 text-emerald-800'
+              : importNotification.kind === 'partial'
+                ? 'border-amber-200 bg-amber-50/90 text-amber-900'
+                : 'border-rose-200 bg-rose-50/90 text-rose-800'
+          }`}
+        >
+          <div className="flex items-start gap-1.5">
+            {importNotification.kind === 'success' ? (
+              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
+            ) : (
+              <AlertCircle
+                className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
+                  importNotification.kind === 'partial' ? 'text-amber-600' : 'text-rose-600'
+                }`}
+              />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="font-medium break-words">{importNotification.message}</p>
+              {importNotification.details && importNotification.details.length > 0 && (
+                <ul className="mt-1 space-y-0.5 text-[10px] opacity-90">
+                  {importNotification.details.slice(0, 3).map((d, idx) => (
+                    <li key={idx} className="break-words">
+                      ・{d}
+                    </li>
+                  ))}
+                  {importNotification.details.length > 3 && (
+                    <li>ほか {importNotification.details.length - 3} 件</li>
+                  )}
+                </ul>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onDismissImportNotification}
+              aria-label="通知を閉じる"
+              className="rounded p-0.5 opacity-60 hover:opacity-100"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto px-2 py-2.5 space-y-3 text-xs">
         {/* characters/ */}
-        <div>
+        <div
+          onDragOver={(e) => {
+            handleExternalDragOver(e, 'character', undefined);
+          }}
+          onDragLeave={(e) => handleExternalDragLeave(e, 'character', undefined)}
+          onDrop={(e) => {
+            handleExternalDrop(e, 'character', undefined);
+          }}
+          className={`rounded-md transition-colors ${
+            isExternalDropActive('character', undefined)
+              ? isAdult
+                ? 'bg-rose-50/80 ring-1 ring-dashed ring-rose-400'
+                : 'bg-sky-50/80 ring-1 ring-dashed ring-sky-400'
+              : ''
+          }`}
+        >
           <div
             onDragOver={(e) => {
               const isCharDrag =
@@ -867,6 +1069,18 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  setOpenFolders((prev) => ({ ...prev, characters: true }));
+                  openImportPicker('character', undefined);
+                }}
+                title="既存ファイル(.json)からキャラクターを読み込み"
+                aria-label="既存ファイルからキャラクターを読み込み"
+                className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
+              >
+                <FileUp className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
                 onClick={() => onAddCharacter(undefined)}
                 title="キャラクターを追加"
                 className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
@@ -875,6 +1089,12 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
               </button>
             </div>
           </div>
+
+          {isExternalDropActive('character', undefined) && (
+            <div className="mx-1.5 my-1 rounded border border-dashed border-sky-300 bg-white/90 px-2 py-1 text-center text-[10px] font-medium text-sky-700">
+              ここに .json をドロップして読み込み
+            </div>
+          )}
 
           {openFolders.characters && (
             <div className="mt-0.5 space-y-1 pl-3">
@@ -966,6 +1186,10 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                         return;
                       }
 
+                      if (handleExternalDragOver(e, 'character', folder)) {
+                        return;
+                      }
+
                       const isCharDrag =
                         Boolean(draggingCharId) ||
                         e.dataTransfer.types.includes('text/character-id');
@@ -976,6 +1200,7 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                       if (dropTargetFolder !== folder) setDropTargetFolder(folder);
                     }}
                     onDragLeave={(e) => {
+                      handleExternalDragLeave(e, 'character', folder);
                       if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
                         if (dropTargetFolder === folder) setDropTargetFolder(null);
                         if (charFolderDropTarget?.folder === folder) {
@@ -984,6 +1209,10 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                       }
                     }}
                     onDrop={(e) => {
+                      if (handleExternalDrop(e, 'character', folder)) {
+                        return;
+                      }
+
                       const sourceFolder =
                         draggingCharFolder || e.dataTransfer.getData('text/character-folder');
                       if (sourceFolder) {
@@ -1017,10 +1246,10 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                     className={`relative rounded transition-colors ${
                       isFolderDragging ? 'opacity-45' : ''
                     } ${
-                      isDropHere
+                      isDropHere || isExternalDropActive('character', folder)
                         ? isAdult
                           ? 'bg-rose-100/70 ring-1 ring-rose-400'
-                          : 'bg-slate-200/80 ring-1 ring-slate-400'
+                          : 'bg-sky-100/70 ring-1 ring-sky-400'
                         : ''
                     }`}
                   >
@@ -1130,6 +1359,14 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                         <div className="hidden items-center gap-0.5 group-hover:flex shrink-0">
                           <button
                             type="button"
+                            onClick={() => openImportPicker('character', folder)}
+                            title={`${folder} へ既存ファイル(.json)から読み込み`}
+                            className="rounded p-0.5 text-slate-400 hover:bg-slate-300/60 hover:text-slate-800"
+                          >
+                            <FileUp className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => onAddCharacter(folder)}
                             title={`${folder} にキャラクターを追加`}
                             className="rounded p-0.5 text-slate-400 hover:bg-slate-300/60 hover:text-slate-800"
@@ -1209,7 +1446,22 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
         </div>
 
         {/* world/ (世界観設定) */}
-        <div>
+        <div
+          onDragOver={(e) => {
+            handleExternalDragOver(e, 'world', undefined);
+          }}
+          onDragLeave={(e) => handleExternalDragLeave(e, 'world', undefined)}
+          onDrop={(e) => {
+            handleExternalDrop(e, 'world', undefined);
+          }}
+          className={`rounded-md transition-colors ${
+            isExternalDropActive('world', undefined)
+              ? isAdult
+                ? 'bg-rose-50/80 ring-1 ring-dashed ring-rose-400'
+                : 'bg-sky-50/80 ring-1 ring-dashed ring-sky-400'
+              : ''
+          }`}
+        >
           <div
             onDragOver={(e) => {
               const isWorldDrag =
@@ -1270,6 +1522,18 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  setOpenFolders((prev) => ({ ...prev, world: true }));
+                  openImportPicker('world', undefined);
+                }}
+                title="既存ファイル(.json)から世界観設定を読み込み"
+                aria-label="既存ファイルから世界観設定を読み込み"
+                className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
+              >
+                <FileUp className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
                 onClick={() => onAddWorldSetting(undefined)}
                 title="世界観設定を追加"
                 className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
@@ -1278,6 +1542,12 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
               </button>
             </div>
           </div>
+
+          {isExternalDropActive('world', undefined) && (
+            <div className="mx-1.5 my-1 rounded border border-dashed border-sky-300 bg-white/90 px-2 py-1 text-center text-[10px] font-medium text-sky-700">
+              ここに .json をドロップして読み込み
+            </div>
+          )}
 
           {openFolders.world && (
             <div className="mt-0.5 space-y-1 pl-3">
@@ -1369,6 +1639,10 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                         return;
                       }
 
+                      if (handleExternalDragOver(e, 'world', folder)) {
+                        return;
+                      }
+
                       const isWorldDrag =
                         Boolean(draggingWorldId) ||
                         e.dataTransfer.types.includes('text/world-id');
@@ -1379,6 +1653,7 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                       if (dropTargetWorldFolder !== folder) setDropTargetWorldFolder(folder);
                     }}
                     onDragLeave={(e) => {
+                      handleExternalDragLeave(e, 'world', folder);
                       if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
                         if (dropTargetWorldFolder === folder) setDropTargetWorldFolder(null);
                         if (worldFolderDropTarget?.folder === folder) {
@@ -1387,6 +1662,10 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                       }
                     }}
                     onDrop={(e) => {
+                      if (handleExternalDrop(e, 'world', folder)) {
+                        return;
+                      }
+
                       const sourceFolder =
                         draggingWorldFolder || e.dataTransfer.getData('text/world-folder');
                       if (sourceFolder) {
@@ -1420,10 +1699,10 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                     className={`relative rounded transition-colors ${
                       isFolderDragging ? 'opacity-45' : ''
                     } ${
-                      isDropHere
+                      isDropHere || isExternalDropActive('world', folder)
                         ? isAdult
                           ? 'bg-rose-100/70 ring-1 ring-rose-400'
-                          : 'bg-slate-200/80 ring-1 ring-slate-400'
+                          : 'bg-sky-100/70 ring-1 ring-sky-400'
                         : ''
                     }`}
                   >
@@ -1535,6 +1814,14 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                         <div className="hidden items-center gap-0.5 group-hover:flex shrink-0">
                           <button
                             type="button"
+                            onClick={() => openImportPicker('world', folder)}
+                            title={`${folder} へ既存ファイル(.json)から読み込み`}
+                            className="rounded p-0.5 text-slate-400 hover:bg-slate-300/60 hover:text-slate-800"
+                          >
+                            <FileUp className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => onAddWorldSetting(folder)}
                             title={`${folder} に設定を追加`}
                             className="rounded p-0.5 text-slate-400 hover:bg-slate-300/60 hover:text-slate-800"
@@ -1614,7 +1901,22 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
         </div>
 
         {/* plots/ */}
-        <div>
+        <div
+          onDragOver={(e) => {
+            handleExternalDragOver(e, 'plot', undefined);
+          }}
+          onDragLeave={(e) => handleExternalDragLeave(e, 'plot', undefined)}
+          onDrop={(e) => {
+            handleExternalDrop(e, 'plot', undefined);
+          }}
+          className={`rounded-md transition-colors ${
+            isExternalDropActive('plot', undefined)
+              ? isAdult
+                ? 'bg-rose-50/80 ring-1 ring-dashed ring-rose-400'
+                : 'bg-sky-50/80 ring-1 ring-dashed ring-sky-400'
+              : ''
+          }`}
+        >
           <div className="flex items-center justify-between px-1.5 py-1 text-slate-600">
             <button
               type="button"
@@ -1629,15 +1931,35 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
               <Folder className="h-3.5 w-3.5 text-slate-400" />
               <span className="font-code text-[11px]">plots/</span>
             </button>
-            <button
-              type="button"
-              onClick={onAddPlot}
-              title="新規プロットを追加"
-              className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenFolders((prev) => ({ ...prev, plots: true }));
+                  openImportPicker('plot', undefined);
+                }}
+                title="既存ファイル(.json)からプロットを読み込み"
+                aria-label="既存ファイルからプロットを読み込み"
+                className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
+              >
+                <FileUp className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={onAddPlot}
+                title="新規プロットを追加"
+                className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
+
+          {isExternalDropActive('plot', undefined) && (
+            <div className="mx-1.5 my-1 rounded border border-dashed border-sky-300 bg-white/90 px-2 py-1 text-center text-[10px] font-medium text-sky-700">
+              ここに .json をドロップして読み込み
+            </div>
+          )}
 
           {openFolders.plots && (
             <div className="mt-0.5 space-y-1 pl-3">
@@ -1799,7 +2121,22 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
         </div>
 
         {/* scenes/ */}
-        <div>
+        <div
+          onDragOver={(e) => {
+            handleExternalDragOver(e, 'scene', undefined);
+          }}
+          onDragLeave={(e) => handleExternalDragLeave(e, 'scene', undefined)}
+          onDrop={(e) => {
+            handleExternalDrop(e, 'scene', undefined);
+          }}
+          className={`rounded-md transition-colors ${
+            isExternalDropActive('scene', undefined)
+              ? isAdult
+                ? 'bg-rose-50/80 ring-1 ring-dashed ring-rose-400'
+                : 'bg-sky-50/80 ring-1 ring-dashed ring-sky-400'
+              : ''
+          }`}
+        >
           <div
             onDragOver={(e) => {
               const isSceneDrag =
@@ -1861,6 +2198,18 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  setOpenFolders((prev) => ({ ...prev, scenes: true }));
+                  openImportPicker('scene', undefined);
+                }}
+                title="既存ファイル(.md / .txt)からシーンを読み込み"
+                aria-label="既存ファイルからシーンを読み込み"
+                className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
+              >
+                <FileUp className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
                 onClick={() => onAddScene(undefined)}
                 title="新規シーンを作成"
                 className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
@@ -1869,6 +2218,12 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
               </button>
             </div>
           </div>
+
+          {isExternalDropActive('scene', undefined) && (
+            <div className="mx-1.5 my-1 rounded border border-dashed border-sky-300 bg-white/90 px-2 py-1 text-center text-[10px] font-medium text-sky-700">
+              ここに .md / .txt をドロップして読み込み
+            </div>
+          )}
 
           {openFolders.scenes && (
             <div className="mt-0.5 space-y-1 pl-3">
@@ -1960,6 +2315,10 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                         return;
                       }
 
+                      if (handleExternalDragOver(e, 'scene', folder)) {
+                        return;
+                      }
+
                       const isSceneDrag =
                         Boolean(draggingSceneId) ||
                         e.dataTransfer.types.includes('text/scene-id');
@@ -1970,6 +2329,7 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                       if (dropTargetSceneFolder !== folder) setDropTargetSceneFolder(folder);
                     }}
                     onDragLeave={(e) => {
+                      handleExternalDragLeave(e, 'scene', folder);
                       if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
                         if (dropTargetSceneFolder === folder) setDropTargetSceneFolder(null);
                         if (sceneFolderDropTarget?.folder === folder) {
@@ -1978,6 +2338,10 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                       }
                     }}
                     onDrop={(e) => {
+                      if (handleExternalDrop(e, 'scene', folder)) {
+                        return;
+                      }
+
                       const sourceFolder =
                         draggingSceneFolder || e.dataTransfer.getData('text/scene-folder');
                       if (sourceFolder) {
@@ -2011,10 +2375,10 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                     className={`relative rounded transition-colors ${
                       isFolderDragging ? 'opacity-45' : ''
                     } ${
-                      isDropHere
+                      isDropHere || isExternalDropActive('scene', folder)
                         ? isAdult
                           ? 'bg-rose-100/70 ring-1 ring-rose-400'
-                          : 'bg-slate-200/80 ring-1 ring-slate-400'
+                          : 'bg-sky-100/70 ring-1 ring-sky-400'
                         : ''
                     }`}
                   >
@@ -2144,6 +2508,14 @@ export const LeftTreePane: React.FC<LeftTreePaneProps> = ({
                         })()}
 
                         <div className="hidden items-center gap-0.5 group-hover:flex shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openImportPicker('scene', folder)}
+                            title={`${folder} へ既存ファイル(.md / .txt)から読み込み`}
+                            className="rounded p-0.5 text-slate-400 hover:bg-slate-300/60 hover:text-slate-800"
+                          >
+                            <FileUp className="h-3 w-3" />
+                          </button>
                           <button
                             type="button"
                             onClick={() => onAddScene(folder)}

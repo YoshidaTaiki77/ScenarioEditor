@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Info, X } from 'lucide-react';
+import { Info, RotateCcw, X } from 'lucide-react';
 import {
   STANDARD_CHARACTER_CATEGORIES,
   type ActiveMode,
@@ -22,6 +22,17 @@ import {
 import { INITIAL_WORKSPACE, createWorkspaceFromTemplate } from './data/initialProject';
 import { exportScenarioBundle } from './utils/scenarioEngine';
 import { createEmptyMangaPage, serializeMangaMarkdown } from './utils/mangaEngine';
+import {
+  importFilesIntoWorkspace,
+  type ImportEntityType,
+  type ImportNotification,
+} from './utils/fileImporter';
+import {
+  analyzeCharacterDeleteImpact,
+  deleteCharacterFromWorkspace,
+  restoreDeletedCharacterToWorkspace,
+  type CharacterDeleteUndoSnapshot,
+} from './utils/characterDeletion';
 import {
   AUTO_SNAPSHOT_INTERVAL_MS,
   HISTORY_DIR_NAME,
@@ -47,6 +58,7 @@ import {
   type SceneEditorHandle,
 } from './components/SceneEditorPane';
 import { CharacterEditorPane } from './components/CharacterEditorPane';
+import { DeleteCharacterModal } from './components/DeleteCharacterModal';
 import { WorldEditorPane } from './components/WorldEditorPane';
 import { PlotBoard, type MoveCardPosition } from './components/PlotBoard';
 import { NewPlotModal, type CreatePlotPayload } from './components/NewPlotModal';
@@ -107,6 +119,12 @@ export default function App() {
     hasPendingChanges: false,
   });
   const [noticeBanner, setNoticeBanner] = useState<string | null>(null);
+  const [importNotification, setImportNotification] = useState<ImportNotification | null>(null);
+  const importNotificationTimerRef = useRef<number | null>(null);
+  const [pendingDeleteCharId, setPendingDeleteCharId] = useState<string | null>(null);
+  const [deletedCharacterUndo, setDeletedCharacterUndo] =
+    useState<CharacterDeleteUndoSnapshot | null>(null);
+  const deleteUndoTimerRef = useRef<number | null>(null);
   const [pendingReconnectDir, setPendingReconnectDir] = useState<string | null>(null);
   const [pendingEmptyDir, setPendingEmptyDir] = useState<FSDirectoryHandle | null>(null);
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
@@ -173,6 +191,12 @@ export default function App() {
     setWorkspace(loaded);
     setSplitPlotId(null);
     setCursorIndex(0);
+    setPendingDeleteCharId(null);
+    setDeletedCharacterUndo(null);
+    if (deleteUndoTimerRef.current !== null) {
+      window.clearTimeout(deleteUndoTimerRef.current);
+      deleteUndoTimerRef.current = null;
+    }
     if (loaded.scenes.length > 0) {
       setSelectedItem({ type: 'scene', id: loaded.scenes[0].sceneId });
     } else if (loaded.plots.length > 0) {
@@ -510,6 +534,19 @@ export default function App() {
     }
     return workspace.plots[0];
   }, [workspace.plots, selectedItem, splitPlotId, activeScene]);
+
+  const pendingDeleteCharImpact = useMemo(() => {
+    if (!pendingDeleteCharId) return null;
+    return analyzeCharacterDeleteImpact(workspace, pendingDeleteCharId);
+  }, [workspace, pendingDeleteCharId]);
+
+  useEffect(() => {
+    return () => {
+      if (deleteUndoTimerRef.current !== null) {
+        window.clearTimeout(deleteUndoTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleDirectoryConnectResult = (result: DirectoryConnectResult) => {
     if (result.status === 'connected' && result.handle) {
@@ -1703,6 +1740,63 @@ export default function App() {
     setSelectedItem({ type: 'character', id });
   };
 
+  const handleDismissDeleteUndo = useCallback(() => {
+    if (deleteUndoTimerRef.current !== null) {
+      window.clearTimeout(deleteUndoTimerRef.current);
+      deleteUndoTimerRef.current = null;
+    }
+    setDeletedCharacterUndo(null);
+  }, []);
+
+  const handleRequestDeleteCharacter = useCallback((characterId: string) => {
+    setPendingDeleteCharId(characterId);
+  }, []);
+
+  const handleConfirmDeleteCharacter = (characterId: string) => {
+    const result = deleteCharacterFromWorkspace(workspace, characterId, selectedItem);
+    setPendingDeleteCharId(null);
+    if (!result) return;
+
+    setWorkspace(result.nextWorkspace);
+
+    if (selectedItem.type === 'character' && selectedItem.id === characterId) {
+      const remainingChars = result.nextWorkspace.characters;
+      if (remainingChars.length > 0) {
+        const nextIdx = Math.min(result.undoSnapshot.originalIndex, remainingChars.length - 1);
+        setSelectedItem({ type: 'character', id: remainingChars[nextIdx].id });
+      } else if (result.nextWorkspace.scenes.length > 0) {
+        setSelectedItem({ type: 'scene', id: result.nextWorkspace.scenes[0].sceneId });
+      } else if (result.nextWorkspace.plots.length > 0) {
+        setSelectedItem({ type: 'plot', id: result.nextWorkspace.plots[0].plotId });
+      } else if ((result.nextWorkspace.worldSettings ?? []).length > 0) {
+        setSelectedItem({ type: 'world', id: result.nextWorkspace.worldSettings![0].id });
+      }
+    }
+
+    if (deleteUndoTimerRef.current !== null) {
+      window.clearTimeout(deleteUndoTimerRef.current);
+    }
+    setDeletedCharacterUndo(result.undoSnapshot);
+    deleteUndoTimerRef.current = window.setTimeout(() => {
+      setDeletedCharacterUndo(null);
+      deleteUndoTimerRef.current = null;
+    }, 12000);
+  };
+
+  const handleUndoDeleteCharacter = () => {
+    if (!deletedCharacterUndo) return;
+    const snapshot = deletedCharacterUndo;
+    handleDismissDeleteUndo();
+
+    setWorkspace((prev) => restoreDeletedCharacterToWorkspace(prev, snapshot));
+    if (
+      snapshot.previousSelectedItem.type === 'character' &&
+      snapshot.previousSelectedItem.id === snapshot.deletedCharacter.id
+    ) {
+      setSelectedItem(snapshot.previousSelectedItem);
+    }
+  };
+
   const handleCreateCharacterFolder = (
     rawName: string
   ): { ok: boolean; error?: string } => {
@@ -2385,6 +2479,50 @@ export default function App() {
     setSelectedItem({ type: 'plot', id: plotId });
   };
 
+  const handleDismissImportNotification = useCallback(() => {
+    if (importNotificationTimerRef.current !== null) {
+      window.clearTimeout(importNotificationTimerRef.current);
+      importNotificationTimerRef.current = null;
+    }
+    setImportNotification(null);
+  }, []);
+
+  const handleImportFiles = useCallback(
+    async (type: ImportEntityType, files: FileList | File[], targetFolder?: string) => {
+      const fileArray = Array.from(files);
+      if (fileArray.length === 0) return;
+
+      const result = await importFilesIntoWorkspace(
+        type,
+        fileArray,
+        latestWorkspaceRef.current,
+        targetFolder
+      );
+
+      if (result.importedCount > 0) {
+        setWorkspace(result.nextWorkspace);
+        if (result.firstSelectedItem) {
+          setSelectedItem(result.firstSelectedItem);
+          if (result.firstSelectedItem.type === 'plot') {
+            setSplitPlotId(result.firstSelectedItem.id);
+          }
+        }
+      }
+
+      if (importNotificationTimerRef.current !== null) {
+        window.clearTimeout(importNotificationTimerRef.current);
+        importNotificationTimerRef.current = null;
+      }
+      setImportNotification(result.notification);
+      const ttl = result.notification.kind === 'success' ? 6000 : 12000;
+      importNotificationTimerRef.current = window.setTimeout(() => {
+        setImportNotification((cur) => (cur?.id === result.notification.id ? null : cur));
+        importNotificationTimerRef.current = null;
+      }, ttl);
+    },
+    []
+  );
+
   const handleDeletePlot = (plotId: string) => {
     setWorkspace((prev) => {
       if (prev.plots.length <= 1) return prev;
@@ -2508,6 +2646,7 @@ export default function App() {
       onReorderScene={handleReorderScene}
       onReorderSceneFolder={handleReorderSceneFolder}
       onAddCharacter={handleAddCharacter}
+      onRequestDeleteCharacter={handleRequestDeleteCharacter}
       onCreateCharacterFolder={handleCreateCharacterFolder}
       onRenameCharacterFolder={handleRenameCharacterFolder}
       onDeleteCharacterFolder={handleDeleteCharacterFolder}
@@ -2525,6 +2664,9 @@ export default function App() {
       onAddPlot={() => setIsNewPlotModalOpen(true)}
       onDeletePlot={handleDeletePlot}
       onReorderPlot={handleReorderPlot}
+      onImportFiles={(type, files, targetFolder) => void handleImportFiles(type, files, targetFolder)}
+      importNotification={importNotification}
+      onDismissImportNotification={handleDismissImportNotification}
       isOverlay={isLeftOverlay}
       onClose={isLeftOverlay ? () => setLeftPaneOpen(false) : undefined}
     />
@@ -2746,6 +2888,7 @@ export default function App() {
               onRemoveDefaultCommonField={handleRemoveDefaultCommonField}
               onRemoveDefaultDualField={handleRemoveDefaultDualField}
               onMoveCharacterToFolder={handleMoveCharacterToFolder}
+              onRequestDeleteCharacter={handleRequestDeleteCharacter}
             />
           )}
 
@@ -2831,6 +2974,46 @@ export default function App() {
 
       <OfflineIndicator />
 
+      {deletedCharacterUndo && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-4 left-1/2 z-40 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/95 px-4 py-2.5 text-xs text-white shadow-lg"
+        >
+          <span className="truncate">
+            「{deletedCharacterUndo.deletedCharacter.common.name || deletedCharacterUndo.deletedCharacter.id}」を削除しました
+            {deletedCharacterUndo.cleanedStructuredRefCount > 0 && (
+              <span className="ml-1.5 text-slate-300">
+                （関連参照 {deletedCharacterUndo.cleanedStructuredRefCount}件を整理）
+              </span>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={handleUndoDeleteCharacter}
+            className="inline-flex shrink-0 items-center gap-1 rounded bg-white/15 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-white/25 transition-colors"
+          >
+            <RotateCcw className="h-3 w-3" />
+            <span>元に戻す</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleDismissDeleteUndo}
+            aria-label="通知を閉じる"
+            className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-white/10 hover:text-white transition-colors"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      <DeleteCharacterModal
+        impact={pendingDeleteCharImpact}
+        activeMode={activeMode}
+        onCancel={() => setPendingDeleteCharId(null)}
+        onConfirm={handleConfirmDeleteCharacter}
+      />
+
       <NewPlotModal
         isOpen={isNewPlotModalOpen}
         activeMode={activeMode}
@@ -2840,6 +3023,7 @@ export default function App() {
         sceneFolders={workspace.project.sceneFolders ?? []}
         onClose={() => setIsNewPlotModalOpen(false)}
         onCreate={handleAddPlot}
+        onImportPlotFiles={(files) => void handleImportFiles('plot', files)}
       />
 
       <NewProjectModal

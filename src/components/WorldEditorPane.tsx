@@ -2,7 +2,6 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import {
   BookOpen,
   Check,
-  Download,
   ExternalLink,
   Folder,
   Pencil,
@@ -18,7 +17,7 @@ import type {
   WorldCustomField,
   WorldSettingData,
 } from '../types/scenario';
-import { getWorldFilename, triggerDownload } from '../utils/storageManager';
+import { getWorldFilename } from '../utils/storageManager';
 import { ReferenceImageGallery } from './CharacterImageGallery';
 
 interface AutoGrowTextareaProps {
@@ -214,11 +213,6 @@ export const WorldEditorPane: React.FC<WorldEditorPaneProps> = ({
     }
   };
 
-  const handleDownloadJson = () => {
-    const payload = JSON.stringify({ ...worldItem, filename: currentFilename }, null, 2);
-    triggerDownload(currentFilename, payload, 'application/json;charset=utf-8');
-  };
-
   const handleApplyPreset = (preset: WorldFieldPresetGroup) => {
     setFieldError(null);
     const existingKeys = new Set(customFields.map((f) => f.key));
@@ -360,15 +354,6 @@ export const WorldEditorPane: React.FC<WorldEditorPaneProps> = ({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={handleDownloadJson}
-                className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-              >
-                <Download className="h-3.5 w-3.5 text-slate-400" />
-                <span>JSON保存</span>
-              </button>
-
               {confirmingDelete ? (
                 <div className="flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1">
                   <span className="text-[11px] font-medium text-rose-700">削除しますか？</span>
